@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: zy
+          POSTGRES_PASSWORD: zy
+          POSTGRES_DB: zy_commerce_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U zy -d zy_commerce_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://zy:zy@localhost:5432/zy_commerce_test?schema=public
+      AUTH_SECRET: ci-only-secret-not-for-production-0000000000
+      AUTH_TRUST_HOST: "true"
+      NEXT_PUBLIC_ROOT_DOMAIN: localhost:3000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test:unit
+
+      - name: Migrate test database
+        run: pnpm prisma migrate deploy
+
+      - name: Integration tests (tenant isolation)
+        run: pnpm vitest run --project integration
+
+      - name: Build
+        run: pnpm build

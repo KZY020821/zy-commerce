@@ -1,0 +1,431 @@
+// ZY Commerce — Prisma schema
+//
+// MULTI-TENANCY INVARIANT (spec §4):
+//   Every tenant-scoped model carries a `tenantId` column and a relation to Tenant.
+//   `src/lib/db/tenant-client.ts` wraps PrismaClient in an extension that injects
+//   `tenantId` into every read and write on these models. A unit test
+//   (tests/unit/schema-invariants.test.ts) parses this file and fails if a model
+//   is added without `tenantId` and without being explicitly allow-listed.
+//
+// MONEY: all monetary amounts are integers in the currency's minor unit
+//   (cents, sen, etc.). Tax rates are stored in basis points (600 = 6.00%).
+//   One currency per tenant (spec §2); Product/Order/Payment carry the currency
+//   code as a snapshot so history stays correct if a tenant changes it later.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum UserRole {
+  SUPER_ADMIN // platform owner; tenantId is NULL
+  STORE_ADMIN // manages exactly one tenant
+  CUSTOMER    // shopper account, belongs to exactly one tenant
+}
+
+enum AddressType {
+  SHIPPING
+  BILLING
+}
+
+/// Spec §6: PENDING_PAYMENT → PAID → PROCESSING → SHIPPED → DELIVERED,
+/// with CANCELLED / REFUNDED as terminal states. Transition rules live in
+/// src/lib/orders/status.ts (never in the DB).
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+// ---------------------------------------------------------------------------
+// Platform
+// ---------------------------------------------------------------------------
+
+model Tenant {
+  id     String       @id @default(cuid())
+  name   String
+  /// Unique subdomain label: {slug}.<ROOT_DOMAIN>. Reserved slugs are rejected
+  /// at provisioning time (see src/lib/tenant/resolve.ts).
+  slug   String       @unique
+  status TenantStatus @default(ACTIVE)
+
+  // Storefront branding (spec §7.2, §7.7)
+  logoUrl      String?
+  primaryColor String  @default("#0f172a")
+  contactEmail String?
+
+  // Region & currency (spec §7.7). ISO 4217 / ISO 3166-1 alpha-2 / BCP 47.
+  currency String @default("USD")
+  country  String @default("US")
+  locale   String @default("en-US")
+
+  // Checkout pricing rules (flat shipping + percentage tax, per tenant)
+  shippingFlatRate Int @default(0) // minor units
+  taxRateBps       Int @default(0) // basis points, 0..10000
+
+  /// Last assigned human-friendly order number for this tenant (atomic increment).
+  orderSequence Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users             User[]
+  customers         Customer[]
+  addresses         Address[]
+  categories        Category[]
+  products          Product[]
+  productImages     ProductImage[]
+  productVariants   ProductVariant[]
+  carts             Cart[]
+  cartItems         CartItem[]
+  orders            Order[]
+  orderItems        OrderItem[]
+  orderStatusEvents OrderStatusEvent[]
+  payments          Payment[]
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  /// NULL only for SUPER_ADMIN. A partial unique index on (email) WHERE tenantId
+  /// IS NULL is added in the initial migration because Postgres treats NULLs as
+  /// distinct in the composite unique below.
+  tenantId     String?
+  email        String // stored lower-cased
+  passwordHash String
+  name         String?
+  role         UserRole
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant   Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer?
+
+  statusEventsCreated OrderStatusEvent[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId, role])
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  tenantId  String
+  email     String // stored lower-cased
+  name      String?
+  phone     String?
+  /// NULL for guest customers captured at checkout (spec §5).
+  userId    String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  addresses Address[]
+  carts     Cart[]
+  orders    Order[]
+
+  @@unique([tenantId, email])
+}
+
+model Address {
+  id         String      @id @default(cuid())
+  tenantId   String
+  customerId String
+  type       AddressType
+  fullName   String
+  line1      String
+  line2      String?
+  city       String
+  state      String?
+  postalCode String
+  country    String // ISO 3166-1 alpha-2
+  phone      String?
+  createdAt  DateTime    @default(now())
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  shippingOrders Order[] @relation("OrderShippingAddress")
+  billingOrders  Order[] @relation("OrderBillingAddress")
+
+  @@index([tenantId, customerId])
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+model Category {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  slug        String
+  description String?
+  parentId    String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant   Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryTree")
+  products Product[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId, parentId])
+}
+
+model Product {
+  id          String  @id @default(cuid())
+  tenantId    String
+  name        String
+  slug        String
+  description String? @db.Text
+  /// Unique per tenant (spec §7.1). When hasVariants=true this is the parent SKU
+  /// and stock is tracked on ProductVariant rows instead.
+  sku         String
+  price       Int // minor units
+  currency    String
+  categoryId  String?
+  active      Boolean @default(true)
+  hasVariants Boolean @default(false)
+
+  // Inventory (spec §6: simple stockQuantity on Product/Variant for v1)
+  stockQuantity     Int @default(0)
+  lowStockThreshold Int @default(5)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category   Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  images     ProductImage[]
+  variants   ProductVariant[]
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  @@unique([tenantId, sku])
+  @@unique([tenantId, slug])
+  @@index([tenantId, categoryId])
+  @@index([tenantId, active])
+  @@index([tenantId, name])
+}
+
+model ProductImage {
+  id        String   @id @default(cuid())
+  tenantId  String
+  productId String
+  url       String
+  alt       String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, sortOrder])
+}
+
+model ProductVariant {
+  id            String   @id @default(cuid())
+  tenantId      String
+  productId     String
+  sku           String
+  /// Display label, e.g. "Red / L"
+  name          String
+  /// Free-form option map, e.g. {"size":"L","color":"Red"}
+  attributes    Json
+  /// NULL means "use Product.price"
+  priceOverride Int?
+  stockQuantity Int      @default(0)
+  active        Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  @@unique([tenantId, sku])
+  @@index([productId])
+}
+
+// ---------------------------------------------------------------------------
+// Cart
+// ---------------------------------------------------------------------------
+
+model Cart {
+  id           String    @id @default(cuid())
+  tenantId     String
+  /// NULL for guest carts, which are identified by sessionToken instead.
+  customerId   String?
+  /// Opaque random token stored in an httpOnly cookie for guest carts.
+  sessionToken String?   @unique
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tenant   Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items    CartItem[]
+
+  @@index([tenantId, customerId])
+}
+
+model CartItem {
+  id         String   @id @default(cuid())
+  tenantId   String
+  cartId     String
+  productId  String
+  variantId  String?
+  quantity   Int
+  priceAtAdd Int // minor units; re-validated against live price at checkout
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  cart    Cart            @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([cartId])
+}
+
+// ---------------------------------------------------------------------------
+// Orders & payments
+// ---------------------------------------------------------------------------
+
+model Order {
+  id            String      @id @default(cuid())
+  tenantId      String
+  /// Human-friendly, sequential per tenant (from Tenant.orderSequence).
+  orderNumber   Int
+  customerId    String
+  /// Snapshot of the email used at checkout; powers guest order lookup (spec §7.5).
+  customerEmail String
+  status        OrderStatus @default(PENDING_PAYMENT)
+
+  subtotal     Int
+  shippingCost Int
+  tax          Int
+  total        Int
+  currency     String
+
+  shippingAddressId String?
+  billingAddressId  String?
+
+  stripeCheckoutSessionId String?   @unique
+  customerNote            String?
+  /// Set when payment is confirmed by webhook (spec §7.3).
+  placedAt                DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant          Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer        Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  shippingAddress Address?           @relation("OrderShippingAddress", fields: [shippingAddressId], references: [id], onDelete: SetNull)
+  billingAddress  Address?           @relation("OrderBillingAddress", fields: [billingAddressId], references: [id], onDelete: SetNull)
+  items           OrderItem[]
+  statusEvents    OrderStatusEvent[]
+  payments        Payment[]
+
+  @@unique([tenantId, orderNumber])
+  @@index([tenantId, status])
+  @@index([tenantId, customerId])
+  @@index([tenantId, createdAt])
+}
+
+model OrderItem {
+  id       String  @id @default(cuid())
+  tenantId String
+  orderId  String
+  /// Nullable so historical orders survive product deletion (spec §6 snapshot rule).
+  productId String?
+  variantId String?
+
+  // Snapshots captured at purchase time — never join back to Product for history.
+  skuSnapshot      String
+  nameSnapshot     String
+  variantSnapshot  Json?
+  imageUrlSnapshot String?
+
+  quantity  Int
+  unitPrice Int // minor units
+  lineTotal Int // quantity * unitPrice
+
+  tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+}
+
+/// Append-only log of status transitions. Powers the customer tracking timeline.
+/// Order.status is a denormalised copy of the latest event (spec §6).
+model OrderStatusEvent {
+  id              String      @id @default(cuid())
+  tenantId        String
+  orderId         String
+  status          OrderStatus
+  note            String?
+  /// NULL when the transition was system-generated (e.g. Stripe webhook).
+  createdByUserId String?
+  createdAt       DateTime    @default(now())
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order     Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdBy User?  @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orderId, createdAt])
+}
+
+model Payment {
+  id                      String        @id @default(cuid())
+  tenantId                String
+  orderId                 String
+  provider                String        @default("stripe")
+  stripePaymentIntentId   String?       @unique
+  stripeCheckoutSessionId String?
+  status                  PaymentStatus @default(PENDING)
+  amount                  Int // minor units
+  currency                String
+  failureReason           String?
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
