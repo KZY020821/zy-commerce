@@ -21,7 +21,17 @@ Next.js 16 (App Router, TypeScript strict, Server Actions) · Prisma 7 + Postgre
 
 ## Local setup
 
-Prerequisites: Node 22+, pnpm 9+, Docker Desktop.
+Prerequisites: Node 22+, pnpm 9+, Docker Desktop (open it once so the daemon is running).
+
+**Quick start — one command:**
+
+```bash
+pnpm up
+```
+
+This creates `.env` if missing (generating `AUTH_SECRET` and the seed passwords), starts Postgres in Docker, applies migrations, seeds the super admin and demo tenant, and runs the dev server. Re-run it any time; every step is idempotent. `pnpm down` stops the database. Your local login passwords are the `SEED_*_PASSWORD` values in `.env`.
+
+**Step by step (same thing, manually):**
 
 ```bash
 pnpm install                 # also runs `prisma generate`
