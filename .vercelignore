@@ -1,0 +1,16 @@
+# Files never uploaded by `vercel deploy` (Git-based deploys are unaffected).
+# The CLI's default list only skips .env.local / .env.*.local — be explicit.
+.env
+.env.*
+!.env.example
+!.env.test
+.git
+node_modules
+.next
+coverage
+test-results
+playwright-report
+docker
+docker-compose.yml
+tests
+docs
