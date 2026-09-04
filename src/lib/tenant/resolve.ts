@@ -75,6 +75,30 @@ export function requestHost(headers: Pick<Headers, "get">): string | null {
   return headers.get("host");
 }
 
+/**
+ * Optional exact-hostname → slug aliases, from TENANT_HOST_ALIASES:
+ *   "demo=zy-commerce-demo.vercel.app,acme=shop.acme.com"
+ * Lets a tenant be served from a hostname that is not a subdomain of the root
+ * domain. Two uses: (1) *.vercel.app cannot nest subdomains, so a live demo
+ * without a custom platform domain gets its own vercel.app alias; (2) it is the
+ * v1 form of per-tenant custom domains (v2 moves this to a Tenant column).
+ */
+export function parseHostAliases(raw: string | undefined = process.env.TENANT_HOST_ALIASES): Map<string, string> {
+  const map = new Map<string, string>(); // hostname → slug
+  if (!raw) return map;
+  for (const pair of raw.split(",")) {
+    const [slug, host] = pair.split("=").map((s) => s?.trim().toLowerCase());
+    if (slug && host && TENANT_SLUG_PATTERN.test(slug)) map.set(normalizeHostname(host), slug);
+  }
+  return map;
+}
+
+/** Alias hostname for a slug, if one is configured. */
+export function aliasHostForSlug(slug: string, aliases: Map<string, string> = parseHostAliases()): string | null {
+  for (const [host, s] of aliases) if (s === slug) return host;
+  return null;
+}
+
 /** Lower-cases and strips the port and any trailing dot from a Host value. */
 export function normalizeHostname(host: string): string {
   return host.trim().toLowerCase().replace(/\.$/, "").replace(/:\d+$/, "");
@@ -93,10 +117,14 @@ export function normalizeHostname(host: string): string {
 export function resolveTenantSlug(
   host: string | null | undefined,
   rootDomain: string = getRootDomain(),
+  aliases: Map<string, string> = parseHostAliases(),
 ): string | null {
   if (!host) return null;
   const hostname = normalizeHostname(host);
   const root = normalizeHostname(rootDomain);
+
+  const aliased = aliases.get(hostname);
+  if (aliased) return aliased;
 
   if (hostname === root || hostname === `www.${root}`) return null;
   if (!hostname.endsWith(`.${root}`)) return null;
@@ -108,14 +136,19 @@ export function resolveTenantSlug(
   return label;
 }
 
-/** Builds an absolute origin for a tenant, e.g. "http://acme.localhost:3000". */
-export function tenantOrigin(slug: string, rootDomain: string = getRootDomain()): string {
-  const protocol = rootDomain.startsWith("localhost") || rootDomain.includes("localhost:") ? "http" : "https";
-  return `${protocol}://${slug}.${rootDomain}`;
+function protocolFor(host: string): "http" | "https" {
+  const h = normalizeHostname(host);
+  return h === "localhost" || h.endsWith(".localhost") || h === "127.0.0.1" ? "http" : "https";
+}
+
+/** Absolute origin for a tenant: its alias host if configured, else "{slug}.{root}". */
+export function tenantOrigin(slug: string, rootDomain: string = getRootDomain(), aliases: Map<string, string> = parseHostAliases()): string {
+  const alias = aliasHostForSlug(slug, aliases);
+  if (alias) return `${protocolFor(alias)}://${alias}`;
+  return `${protocolFor(rootDomain)}://${slug}.${rootDomain}`;
 }
 
 /** Builds the platform root origin, e.g. "http://localhost:3000". */
 export function platformOrigin(rootDomain: string = getRootDomain()): string {
-  const protocol = rootDomain.startsWith("localhost") ? "http" : "https";
-  return `${protocol}://${rootDomain}`;
+  return `${protocolFor(rootDomain)}://${rootDomain}`;
 }

@@ -19,3 +19,10 @@ Choices made while implementing `crm-platform-build-spec.md`, including every `[
 13. **`.env.test` is committed.** It holds only the local test-database URL and a dummy secret, and CI relies on it. All other `.env*` files are ignored.
 14. **Deferred to later phases / fast-follow:** CSV bulk product upload (spec §7.1 `[DECIDE]` → fast-follow), OAuth providers, custom domains (v2 extension point noted in `resolve.ts`), Row Level Security. Third-party providers (Stripe, Resend, Vercel Blob, hosted Postgres) are reserved as env vars and chosen when the product goes live.
 15. **Local database is Docker Postgres 17** (owner's choice); `docker-compose.yml` creates both `zy_commerce` and `zy_commerce_test`.
+
+## Going live (2026-09-04)
+
+16. **Hosted database is Supabase; app on Vercel** (owner's choice). Runtime uses the pooled connection, the Prisma CLI uses the direct/session connection. `src/lib/db/connection.ts` resolves `DATABASE_URL`/`DIRECT_URL` and also the `POSTGRES_*` names the Vercel ↔ Supabase integration injects, so no manual mapping is needed.
+17. **TLS policy for hosted Postgres.** node-postgres treats `sslmode=require` as full verification (and warns); Supabase URLs mean the libpq sense. `buildPoolSettings` maps require/prefer/no-verify → encrypted without verification, `verify-full` → verified, and encrypts by default for any non-local host.
+18. **Migrations and seed run inside the Vercel production build** (`scripts/vercel-build.sh`), never for previews. The seed refuses to invent passwords on Vercel/production: accounts are created only when `SEED_*_PASSWORD` is set, so credentials never appear in build logs.
+19. **Tenant host aliases** (`TENANT_HOST_ALIASES`). `*.vercel.app` cannot nest subdomains, so the demo store is served from its own vercel.app alias. The same mechanism is the v1 form of per-tenant custom domains; v2 moves it to a `Tenant.customDomain` column.

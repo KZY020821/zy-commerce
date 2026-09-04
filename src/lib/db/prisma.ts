@@ -12,15 +12,18 @@
  * `src/lib/tenant/current.ts` → `getTenantDb()`.
  *
  * The client is created lazily on first use so that importing this module
- * (e.g. from a unit test or during `next build`) never requires DATABASE_URL.
+ * (e.g. from a unit test or during `next build`) never requires a database URL.
+ * The runtime uses the POOLED connection (see ./connection.ts).
  */
 import { PrismaClient } from "@/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { buildPoolSettings, resolveRuntimeDatabaseUrl } from "./connection";
 
 function createClient(): PrismaClient {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) throw new Error("DATABASE_URL is not set");
-  const adapter = new PrismaPg({ connectionString });
+  const connectionString = resolveRuntimeDatabaseUrl();
+  if (!connectionString) throw new Error("No database URL set (DATABASE_URL, POSTGRES_PRISMA_URL or POSTGRES_URL)");
+  const settings = buildPoolSettings(connectionString);
+  const adapter = new PrismaPg({ connectionString: settings.connectionString, ssl: settings.ssl, max: settings.max });
   return new PrismaClient({
     adapter,
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],

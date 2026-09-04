@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isValidTenantSlug, normalizeHostname, requestHost, RESERVED_SLUGS, resolveTenantSlug } from "@/lib/tenant/resolve";
+import { aliasHostForSlug, isValidTenantSlug, normalizeHostname, parseHostAliases, requestHost, RESERVED_SLUGS, resolveTenantSlug, tenantOrigin } from "@/lib/tenant/resolve";
 
 const root = "localhost:3000";
 
@@ -67,5 +67,36 @@ describe("requestHost", () => {
   it("falls back to host, then null", () => {
     expect(requestHost(new Headers({ host: "acme.localhost:3000" }))).toBe("acme.localhost:3000");
     expect(requestHost(new Headers())).toBeNull();
+  });
+});
+
+describe("host aliases (TENANT_HOST_ALIASES)", () => {
+  const aliases = parseHostAliases("demo=zy-commerce-demo.vercel.app, acme=Shop.Acme.com,bad slug=x.com,=y.com");
+
+  it("parses valid pairs, normalises hosts, ignores junk", () => {
+    expect([...aliases.entries()]).toEqual([
+      ["zy-commerce-demo.vercel.app", "demo"],
+      ["shop.acme.com", "acme"],
+    ]);
+    expect(parseHostAliases(undefined).size).toBe(0);
+    expect(parseHostAliases("").size).toBe(0);
+  });
+
+  it("resolves an aliased host to its tenant regardless of the root domain", () => {
+    expect(resolveTenantSlug("zy-commerce-demo.vercel.app", "zy-commerce.vercel.app", aliases)).toBe("demo");
+    expect(resolveTenantSlug("SHOP.acme.com:443", "zy-commerce.vercel.app", aliases)).toBe("acme");
+    expect(resolveTenantSlug("zy-commerce.vercel.app", "zy-commerce.vercel.app", aliases)).toBeNull();
+    expect(resolveTenantSlug("other.vercel.app", "zy-commerce.vercel.app", aliases)).toBeNull();
+  });
+
+  it("still resolves ordinary subdomains alongside aliases", () => {
+    expect(resolveTenantSlug("beta.zy.example", "zy.example", aliases)).toBe("beta");
+  });
+
+  it("tenantOrigin prefers the alias and picks the right protocol", () => {
+    expect(tenantOrigin("demo", "zy-commerce.vercel.app", aliases)).toBe("https://zy-commerce-demo.vercel.app");
+    expect(tenantOrigin("beta", "zy-commerce.vercel.app", aliases)).toBe("https://beta.zy-commerce.vercel.app");
+    expect(tenantOrigin("beta", "localhost:3000", new Map())).toBe("http://beta.localhost:3000");
+    expect(aliasHostForSlug("nope", aliases)).toBeNull();
   });
 });

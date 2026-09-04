@@ -132,12 +132,38 @@ tests/unit              pure logic (no DB)   tests/integration  tenant isolation
 tests/e2e               Playwright
 ```
 
-## Deployment (outline — finalised in Phase 5)
+## Deployment (Vercel + Supabase)
 
-- **App:** Vercel. Add the project's environment variables from the table above. `pnpm build` runs `prisma generate` first.
-- **Database:** Neon or Supabase Postgres. Run `pnpm db:deploy` against it from CI or a one-off job before the first deploy.
-- **DNS:** point the apex and a wildcard (`*.your-domain`) at Vercel and add both as project domains; each tenant is then live at `<slug>.your-domain` as soon as its row exists.
-- **Stripe webhook:** register `https://<apex>/api/webhooks/stripe` in the Stripe dashboard and copy the signing secret into `STRIPE_WEBHOOK_SECRET` (Phase 3).
+Production runs on Vercel with a Supabase Postgres. Pushing to `main` deploys production; every production build runs [`scripts/vercel-build.sh`](scripts/vercel-build.sh): `prisma generate` → `prisma migrate deploy` → `prisma db seed` (idempotent) → `next build`. Preview deployments only build, so a branch can never migrate the live database.
+
+### One-time setup
+
+1. **Sign in to Vercel from this machine** so the CLI can act for you:
+   ```bash
+   npx vercel login
+   ```
+2. **Create / link the Vercel project** (GitHub repo `KZY020821/zy-commerce`):
+   ```bash
+   npx vercel link
+   ```
+   or import the repository from the Vercel dashboard. Connecting the Git repo makes every push to `main` a production deploy.
+3. **Add Supabase** — Vercel dashboard → your project → *Storage* → *Create Database* → **Supabase** (Marketplace, free plan) → connect to all environments. This injects `POSTGRES_URL`, `POSTGRES_PRISMA_URL`, `POSTGRES_URL_NON_POOLING` and friends; the app reads them directly.
+   *Manual alternative:* create a project at supabase.com and set `DATABASE_URL` to the **Transaction pooler** URL (port 6543, append `?pgbouncer=true`) and `DIRECT_URL` to the **Session pooler** URL (port 5432).
+4. **Environment variables** (Project → Settings → Environment Variables, all environments):
+
+   | Variable | Value |
+   | --- | --- |
+   | `AUTH_SECRET` | `openssl rand -base64 32` |
+   | `AUTH_TRUST_HOST` | `true` |
+   | `NEXT_PUBLIC_ROOT_DOMAIN` | `<project>.vercel.app` until you have a custom domain |
+   | `TENANT_HOST_ALIASES` | `demo=<project>-demo.vercel.app` (see below) |
+   | `SEED_SUPER_ADMIN_EMAIL` / `SEED_SUPER_ADMIN_PASSWORD` | your platform login; the seed creates it on the first production build |
+   | `SEED_DEMO_TENANT` / `SEED_DEMO_ADMIN_EMAIL` / `SEED_DEMO_ADMIN_PASSWORD` | `true` plus the demo store admin login |
+
+   Do **not** set `NODE_ENV`; Vercel manages it, and the build needs dev dependencies.
+5. **Tenant hostnames.** `*.vercel.app` cannot nest subdomains, so a tenant is served from an alias domain instead: add `<project>-demo.vercel.app` under Project → Settings → Domains and list it in `TENANT_HOST_ALIASES`. With a custom domain, add the apex and `*.yourdomain.com` as project domains (wildcards need Vercel nameservers), set `NEXT_PUBLIC_ROOT_DOMAIN=yourdomain.com`, and every tenant is live at `<slug>.yourdomain.com` automatically.
+6. **Deploy**: `git push`, or `npx vercel --prod`.
+7. **Stripe webhook** (Phase 3): register `https://<root>/api/webhooks/stripe` in the Stripe dashboard and set `STRIPE_WEBHOOK_SECRET`.
 
 ## Provisioning a tenant today
 

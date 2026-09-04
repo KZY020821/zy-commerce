@@ -16,11 +16,16 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { UserRole } from "../src/generated/prisma/enums";
 import { hashPassword, PASSWORD_MIN_LENGTH } from "../src/lib/auth/password";
+import { buildPoolSettings, resolveDirectDatabaseUrl } from "../src/lib/db/connection";
 import { isValidTenantSlug } from "../src/lib/tenant/resolve";
 
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) throw new Error("DATABASE_URL is not set");
-const db = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+const connectionString = resolveDirectDatabaseUrl();
+if (!connectionString) throw new Error("No database URL set (DIRECT_URL, POSTGRES_URL_NON_POOLING or DATABASE_URL)");
+const pool = buildPoolSettings(connectionString);
+const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: pool.connectionString, ssl: pool.ssl, max: 2 }) });
+
+/** On Vercel / production we never invent passwords: they'd only live in build logs. */
+const isHosted = Boolean(process.env.VERCEL) || process.env.NODE_ENV === "production";
 
 const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? "localhost:3000";
 const protocol = rootDomain.startsWith("localhost") ? "http" : "https";
@@ -32,11 +37,15 @@ function readEnv(name: string, fallback?: string): string {
   throw new Error(`Missing required seed variable ${name}`);
 }
 
-function passwordFromEnv(name: string): { password: string; generated: boolean } {
+function passwordFromEnv(name: string): { password: string; generated: boolean } | null {
   const v = process.env[name]?.trim();
   if (v) {
     if (v.length < PASSWORD_MIN_LENGTH) throw new Error(`${name} must be at least ${PASSWORD_MIN_LENGTH} characters`);
     return { password: v, generated: false };
+  }
+  if (isHosted) {
+    console.log(`! ${name} is not set — skipping this account. Add it to the environment and redeploy (or run the seed locally against the live database).`);
+    return null;
   }
   return { password: randomBytes(12).toString("base64url"), generated: true };
 }
@@ -50,7 +59,9 @@ async function seedSuperAdmin() {
     console.log(`✓ Super admin already exists: ${email}`);
     return;
   }
-  const { password, generated } = passwordFromEnv("SEED_SUPER_ADMIN_PASSWORD");
+  const cred = passwordFromEnv("SEED_SUPER_ADMIN_PASSWORD");
+  if (!cred) return;
+  const { password, generated } = cred;
   await db.user.create({
     data: { tenantId: null, email, name: "Platform Owner", role: UserRole.SUPER_ADMIN, passwordHash: await hashPassword(password) },
   });
@@ -88,7 +99,9 @@ async function seedDemoTenant() {
     console.log(`✓ Store admin already exists: ${email}`);
     return;
   }
-  const { password, generated } = passwordFromEnv("SEED_DEMO_ADMIN_PASSWORD");
+  const cred = passwordFromEnv("SEED_DEMO_ADMIN_PASSWORD");
+  if (!cred) return;
+  const { password, generated } = cred;
   await db.user.create({
     data: { tenantId: tenant.id, email, name: "Demo Admin", role: UserRole.STORE_ADMIN, passwordHash: await hashPassword(password) },
   });
