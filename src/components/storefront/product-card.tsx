@@ -21,7 +21,7 @@ export function ProductCard({ product, locale }: { product: ProductCardData; loc
     <Link href={`/products/${product.slug}`} className="group flex flex-col overflow-hidden rounded-xl border bg-card transition-shadow hover:shadow-md">
       <div className="relative aspect-square w-full overflow-hidden bg-muted">
         {product.imageUrl ? (
-          <Image src={product.imageUrl} alt={product.imageAlt ?? product.name} fill sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw" className="object-cover transition-transform duration-300 group-hover:scale-105" />
+          <Image src={product.imageUrl} alt={product.imageAlt ?? product.name} fill unoptimized sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw" className="object-cover transition-transform duration-300 group-hover:scale-105" />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No image</div>
         )}

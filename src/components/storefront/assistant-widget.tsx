@@ -102,7 +102,7 @@ export function AssistantWidget({
                       {m.products.map((p) => (
                         <Link key={p.sku} href={`/products/${p.slug}`} className="flex items-center gap-3 rounded-lg border bg-card p-2 text-sm hover:bg-muted/50">
                           <div className="relative size-12 shrink-0 overflow-hidden rounded-md bg-muted">
-                            {p.imageUrl ? <Image src={p.imageUrl} alt={p.name} fill sizes="48px" className="object-cover" /> : null}
+                            {p.imageUrl ? <Image src={p.imageUrl} alt={p.name} fill unoptimized sizes="48px" className="object-cover" /> : null}
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className="truncate font-medium">{p.name}</p>

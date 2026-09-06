@@ -41,13 +41,13 @@ export default async function ProductPage({ params }: { params: Params }) {
     <article className="grid gap-8 lg:grid-cols-2">
       <div className="space-y-3">
         <div className="relative aspect-square overflow-hidden rounded-xl bg-muted">
-          {primary ? <Image src={primary.url} alt={primary.alt ?? product.name} fill priority sizes="(max-width: 1024px) 100vw, 50vw" className="object-cover" /> : null}
+          {primary ? <Image src={primary.url} alt={primary.alt ?? product.name} fill unoptimized priority sizes="(max-width: 1024px) 100vw, 50vw" className="object-cover" /> : null}
         </div>
         {rest.length > 0 ? (
           <div className="grid grid-cols-4 gap-3">
             {rest.map((img) => (
               <div key={img.id} className="relative aspect-square overflow-hidden rounded-lg bg-muted">
-                <Image src={img.url} alt={img.alt ?? product.name} fill sizes="25vw" className="object-cover" />
+                <Image src={img.url} alt={img.alt ?? product.name} fill unoptimized sizes="25vw" className="object-cover" />
               </div>
             ))}
           </div>
