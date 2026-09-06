@@ -152,3 +152,4 @@ temp/
 # --- Explicit exceptions -----------------------------------------------------
 # .env.test contains only local test-database settings and a dummy secret.
 !.env.test
+.env*
