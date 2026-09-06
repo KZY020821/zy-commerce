@@ -57,7 +57,7 @@ export async function askAssistantAction(raw: { message: string; history: Assist
 
   const tenant = await requireCurrentTenant();
   if (!tenant.assistantEnabled) return { ok: false, error: "The assistant is turned off for this store." };
-  const ai = getAiClient();
+  const ai = await getAiClient();
   if (!ai) return { ok: false, error: "The assistant is not configured yet." };
 
   const h = await headers();

@@ -23,7 +23,7 @@ export interface ExtractSpecsInput {
 }
 
 export async function extractSpecs(input: ExtractSpecsInput): Promise<Record<string, string> | null> {
-  const ai = getAiClient();
+  const ai = await getAiClient();
   if (!ai) return null;
   const response = await ai.client.messages.parse({
     model: ai.model,

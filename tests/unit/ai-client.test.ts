@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveAiConfig } from "@/lib/ai/client";
+import { isAssistantConfigured, resolveAiConfig } from "@/lib/ai/client";
 
 describe("resolveAiConfig", () => {
   it("prefers a direct Anthropic key", () => {
@@ -17,5 +17,10 @@ describe("resolveAiConfig", () => {
   it("returns null with no credentials", () => {
     expect(resolveAiConfig({})).toBeNull();
     expect(resolveAiConfig({ ANTHROPIC_API_KEY: "  " })).toBeNull();
+  });
+  it("treats a Vercel deployment as configured (OIDC token arrives per request)", () => {
+    expect(isAssistantConfigured({})).toBe(false);
+    expect(isAssistantConfigured({ VERCEL: "1" })).toBe(true);
+    expect(isAssistantConfigured({ ANTHROPIC_API_KEY: "k" })).toBe(true);
   });
 });
