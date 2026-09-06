@@ -1,5 +1,7 @@
 /**
- * The product assistant: a tool-using Claude loop over the tenant's catalogue.
+ * The product assistant: a tool-using DeepSeek loop over the tenant's
+ * catalogue, via the OpenAI-compatible chat completions API
+ * (https://api-docs.deepseek.com/guides/tool_calls).
  *
  * Behaviour (system prompt):
  *   - only talks about this store's products, and only from tool results
@@ -9,9 +11,9 @@
  *   - every reply carries 2–4 quick-reply suggestions ("auto follow-up")
  *   - finishes by calling the `respond` tool, which gives a structured reply
  *
- * The loop is provider-agnostic: pass any object with `messages.create`.
+ * The loop is provider-agnostic: pass any object with `chat.completions.create`.
  */
-import type Anthropic from "@anthropic-ai/sdk";
+import type OpenAI from "openai";
 import { formatMoney } from "@/lib/money";
 import { renderCatalogProfile, type CatalogProfile } from "./catalog-profile";
 import { assistantTools, runAssistantTool, type ToolContext } from "./tools";
@@ -40,7 +42,9 @@ export interface AssistantReply {
 }
 
 /** Minimal surface of the SDK client the loop needs — lets tests pass a fake. */
-export type MessagesClient = { messages: { create: (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message> } };
+export type MessagesClient = {
+  chat: { completions: { create: (params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming) => Promise<OpenAI.Chat.Completions.ChatCompletion> } };
+};
 
 export const MAX_TOOL_ROUNDS = 6;
 const MAX_HISTORY_TURNS = 12;
@@ -77,40 +81,50 @@ interface RunOptions {
   tools: ToolContext;
   history: AssistantTurn[];
   userMessage: string;
-  /** Prefer lower effort for chat latency; medium is a good default. */
-  effort?: "low" | "medium" | "high";
+}
+
+function isFunctionCall(call: OpenAI.Chat.Completions.ChatCompletionMessageToolCall): call is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall {
+  return call.type === "function";
+}
+
+function safeParseArgs(raw: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
 }
 
 export async function runAssistant(opts: RunOptions): Promise<AssistantReply> {
   const system = buildSystemPrompt(opts.store);
-  const history = opts.history.slice(-MAX_HISTORY_TURNS).map<Anthropic.MessageParam>((t) => ({ role: t.role, content: t.content }));
-  const messages: Anthropic.MessageParam[] = [...history, { role: "user", content: opts.userMessage }];
+  const history = opts.history.slice(-MAX_HISTORY_TURNS).map<OpenAI.Chat.Completions.ChatCompletionMessageParam>((t) => ({ role: t.role, content: t.content }));
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [{ role: "system", content: system }, ...history, { role: "user", content: opts.userMessage }];
   const toolCalls: AssistantReply["toolCalls"] = [];
   let usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0 };
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-    const response = await opts.client.messages.create({
-      model: opts.model,
-      max_tokens: 2048,
-      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-      tools: assistantTools,
-      output_config: { effort: opts.effort ?? "medium" },
-      messages,
-    });
+    const response = await opts.client.chat.completions.create({ model: opts.model, max_tokens: 2048, tools: assistantTools, messages });
+    const u = response.usage;
     usage = {
-      inputTokens: usage.inputTokens + (response.usage?.input_tokens ?? 0),
-      outputTokens: usage.outputTokens + (response.usage?.output_tokens ?? 0),
-      cacheReadInputTokens: usage.cacheReadInputTokens + (response.usage?.cache_read_input_tokens ?? 0),
+      inputTokens: usage.inputTokens + (u?.prompt_tokens ?? 0),
+      outputTokens: usage.outputTokens + (u?.completion_tokens ?? 0),
+      // DeepSeek reports context-cache hits under prompt_tokens_details.cached_tokens (OpenAI-style field name).
+      cacheReadInputTokens: usage.cacheReadInputTokens + (u?.prompt_tokens_details?.cached_tokens ?? 0),
     };
 
-    if (response.stop_reason === "refusal") {
+    const choice = response.choices[0];
+    const message = choice?.message;
+    if (!message) return { answer: "Sorry, I didn't get a response. Please try again.", suggestions: [], productSkus: [], toolCalls, usage };
+
+    if (message.refusal || choice.finish_reason === "content_filter") {
       return { answer: "Sorry, I can't help with that request. Is there a product I can help you find?", suggestions: ["Show me popular products", "Help me choose"], productSkus: [], toolCalls, usage };
     }
 
-    const toolUses = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-    const respond = toolUses.find((t) => t.name === "respond");
+    const calls = (message.tool_calls ?? []).filter(isFunctionCall);
+    const respond = calls.find((c) => c.function.name === "respond");
     if (respond) {
-      const input = respond.input as { answer?: unknown; suggestions?: unknown; productSkus?: unknown };
+      const input = safeParseArgs(respond.function.arguments) as { answer?: unknown; suggestions?: unknown; productSkus?: unknown };
       return {
         answer: typeof input.answer === "string" && input.answer.trim() ? input.answer.trim() : "I'm not sure how to answer that. Could you tell me a bit more about what you're looking for?",
         suggestions: Array.isArray(input.suggestions) ? input.suggestions.map(String).filter(Boolean).slice(0, 4) : [],
@@ -120,23 +134,24 @@ export async function runAssistant(opts: RunOptions): Promise<AssistantReply> {
       };
     }
 
-    if (toolUses.length === 0 || response.stop_reason === "end_turn" || response.stop_reason === "max_tokens") {
+    if (calls.length === 0 || choice.finish_reason === "stop" || choice.finish_reason === "length") {
       // The model answered in plain text instead of calling respond — accept it.
-      const text = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("\n").trim();
+      const text = (message.content ?? "").trim();
       return { answer: text || "Could you tell me a bit more about what you're looking for?", suggestions: [], productSkus: [], toolCalls, usage };
     }
 
-    messages.push({ role: "assistant", content: response.content });
-    const results: Anthropic.ToolResultBlockParam[] = [];
-    for (const call of toolUses) {
-      toolCalls.push({ name: call.name, input: call.input });
+    messages.push({ role: "assistant", content: message.content, tool_calls: message.tool_calls });
+    for (const call of calls) {
+      const parsedInput = safeParseArgs(call.function.arguments);
+      toolCalls.push({ name: call.function.name, input: parsedInput });
+      let content: string;
       try {
-        results.push({ type: "tool_result", tool_use_id: call.id, content: await runAssistantTool(call.name, call.input, opts.tools) });
+        content = await runAssistantTool(call.function.name, parsedInput, opts.tools);
       } catch (err) {
-        results.push({ type: "tool_result", tool_use_id: call.id, content: JSON.stringify({ error: (err as Error).message }), is_error: true });
+        content = JSON.stringify({ error: (err as Error).message });
       }
+      messages.push({ role: "tool", tool_call_id: call.id, content });
     }
-    messages.push({ role: "user", content: results });
   }
 
   return { answer: "I looked into that but couldn't put together a confident answer. Could you rephrase or narrow it down?", suggestions: ["Show me popular products", "Start over"], productSkus: [], toolCalls, usage };

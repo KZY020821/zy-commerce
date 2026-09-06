@@ -26,9 +26,9 @@ const coreSchema = z.object({
   RESEND_API_KEY: optionalString(),
   EMAIL_FROM: optionalString(),
   BLOB_READ_WRITE_TOKEN: optionalString(),
-  ANTHROPIC_API_KEY: optionalString(),
-  AI_GATEWAY_API_KEY: optionalString(),
+  DEEPSEEK_API_KEY: optionalString(),
   AI_MODEL: optionalString(),
+  AI_BASE_URL: optionalString(),
 });
 
 export type Env = z.infer<typeof coreSchema>;

@@ -1,9 +1,12 @@
 /**
- * Tools the assistant can call. Every query goes through the tenant-scoped
- * client, so the model can only ever see the current store's products.
- * Results are compact JSON strings sized for the model, not full rows.
+ * Tools the assistant can call, in OpenAI-compatible function-calling shape
+ * (DeepSeek's `tools` parameter matches this exactly — see
+ * https://api-docs.deepseek.com/guides/tool_calls). Every query goes through
+ * the tenant-scoped client, so the model can only ever see the current
+ * store's products. Results are compact JSON strings sized for the model,
+ * not full rows.
  */
-import type Anthropic from "@anthropic-ai/sdk";
+import type OpenAI from "openai";
 import type { TenantDb } from "@/lib/db/tenant-client";
 import { formatMoney } from "@/lib/money";
 import { STOCK_LABELS, stockStatus } from "@/lib/catalog/stock";
@@ -16,72 +19,82 @@ export interface ToolContext {
 
 const MAX_RESULTS = 8;
 
-export const assistantTools = [
+export const assistantTools: OpenAI.Chat.Completions.ChatCompletionFunctionTool[] = [
   {
-    name: "list_categories",
-    description: "List the store's product categories with product counts. Use when you need to know what the store sells.",
-    strict: true,
-    input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
+    type: "function",
+    function: {
+      name: "list_categories",
+      description: "List the store's product categories with product counts. Use when you need to know what the store sells.",
+      parameters: { type: "object", properties: {}, required: [], additionalProperties: false },
+    },
   },
   {
-    name: "search_products",
-    description:
-      "Search the store's catalogue. Matches product names, brands, descriptions and specification values. Filter by category slug, price range (in the store currency, major units) and stock. Returns up to 8 compact matches with price, stock and key specs. Call it more than once with different queries when the first search is too narrow.",
-    strict: true,
-    input_schema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Free-text keywords, e.g. '16mm control paddle' or 'women shoe size 8'. Use an empty string to browse a category." },
-        category: { type: ["string", "null"], description: "Category slug from list_categories, or null for all." },
-        minPrice: { type: ["number", "null"], description: "Minimum price in major currency units, or null." },
-        maxPrice: { type: ["number", "null"], description: "Maximum price in major currency units, or null." },
-        inStockOnly: { type: "boolean", description: "Only return products that can be bought right now." },
+    type: "function",
+    function: {
+      name: "search_products",
+      description:
+        "Search the store's catalogue. Matches product names, brands, descriptions and specification values. Filter by category slug, price range (in the store currency, major units) and stock. Returns up to 8 compact matches with price, stock and key specs. Call it more than once with different queries when the first search is too narrow.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Free-text keywords, e.g. '16mm control paddle' or 'women shoe size 8'. Use an empty string to browse a category." },
+          category: { type: ["string", "null"], description: "Category slug from list_categories, or null for all." },
+          minPrice: { type: ["number", "null"], description: "Minimum price in major currency units, or null." },
+          maxPrice: { type: ["number", "null"], description: "Maximum price in major currency units, or null." },
+          inStockOnly: { type: "boolean", description: "Only return products that can be bought right now." },
+        },
+        required: ["query", "category", "minPrice", "maxPrice", "inStockOnly"],
+        additionalProperties: false,
       },
-      required: ["query", "category", "minPrice", "maxPrice", "inStockOnly"],
-      additionalProperties: false,
     },
   },
   {
-    name: "get_product",
-    description: "Get full details for one product by SKU or slug: description, every specification, all variants with their attributes, prices and stock. Use before recommending or comparing so every claim is backed by data.",
-    strict: true,
-    input_schema: {
-      type: "object",
-      properties: { skuOrSlug: { type: "string" } },
-      required: ["skuOrSlug"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "compare_products",
-    description: "Side-by-side specifications for 2–4 products (by SKU or slug). Use when the customer is choosing between options.",
-    strict: true,
-    input_schema: {
-      type: "object",
-      properties: { skusOrSlugs: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 4 } },
-      required: ["skusOrSlugs"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "respond",
-    description:
-      "Deliver your reply to the customer. ALWAYS finish your turn by calling this tool exactly once. `answer` is the message shown to the customer (plain text, short paragraphs, may use simple bullet points). `suggestions` are 2–4 short things the customer might tap next — either answers to the question you just asked, or natural next steps. `productSkus` lists the SKUs of products you mentioned so they can be shown as cards, most relevant first (empty if none).",
-    strict: true,
-    input_schema: {
-      type: "object",
-      properties: {
-        answer: { type: "string" },
-        suggestions: { type: "array", items: { type: "string" }, maxItems: 4 },
-        productSkus: { type: "array", items: { type: "string" }, maxItems: 4 },
+    type: "function",
+    function: {
+      name: "get_product",
+      description: "Get full details for one product by SKU or slug: description, every specification, all variants with their attributes, prices and stock. Use before recommending or comparing so every claim is backed by data.",
+      parameters: {
+        type: "object",
+        properties: { skuOrSlug: { type: "string" } },
+        required: ["skuOrSlug"],
+        additionalProperties: false,
       },
-      required: ["answer", "suggestions", "productSkus"],
-      additionalProperties: false,
     },
   },
-] satisfies Anthropic.Tool[];
+  {
+    type: "function",
+    function: {
+      name: "compare_products",
+      description: "Side-by-side specifications for 2–4 products (by SKU or slug). Use when the customer is choosing between options.",
+      parameters: {
+        type: "object",
+        properties: { skusOrSlugs: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 4 } },
+        required: ["skusOrSlugs"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "respond",
+      description:
+        "Deliver your reply to the customer. ALWAYS finish your turn by calling this tool exactly once. `answer` is the message shown to the customer (plain text, short paragraphs, may use simple bullet points). `suggestions` are 2–4 short things the customer might tap next — either answers to the question you just asked, or natural next steps. `productSkus` lists the SKUs of products you mentioned so they can be shown as cards, most relevant first (empty if none).",
+      parameters: {
+        type: "object",
+        properties: {
+          answer: { type: "string" },
+          suggestions: { type: "array", items: { type: "string" }, maxItems: 4 },
+          productSkus: { type: "array", items: { type: "string" }, maxItems: 4 },
+        },
+        required: ["answer", "suggestions", "productSkus"],
+        additionalProperties: false,
+      },
+    },
+  },
+];
 
-export type AssistantToolName = (typeof assistantTools)[number]["name"];
+export type AssistantToolName = "list_categories" | "search_products" | "get_product" | "compare_products" | "respond";
 
 type Specs = Record<string, unknown> | null;
 
@@ -139,7 +152,6 @@ export async function runAssistantTool(name: string, input: unknown, ctx: ToolCo
         }
         return { p, score };
       });
-      // When there are search terms, keep only products that matched somewhere meaningful.
       const filtered = terms.length ? scored.filter((s) => s.score > 0) : scored;
       filtered.sort((a, b) => b.score - a.score || a.p.price - b.p.price);
       const top = filtered.slice(0, MAX_RESULTS).map(({ p }) => {

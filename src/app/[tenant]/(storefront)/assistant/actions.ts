@@ -6,7 +6,7 @@
  * tenant's ChatConversation log for the admin to review.
  */
 import { randomBytes } from "node:crypto";
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import type { Prisma } from "@/generated/prisma/client";
 import { cookies, headers } from "next/headers";
 import { z } from "zod";
@@ -57,7 +57,7 @@ export async function askAssistantAction(raw: { message: string; history: Assist
 
   const tenant = await requireCurrentTenant();
   if (!tenant.assistantEnabled) return { ok: false, error: "The assistant is turned off for this store." };
-  const ai = await getAiClient();
+  const ai = getAiClient();
   if (!ai) return { ok: false, error: "The assistant is not configured yet." };
 
   const h = await headers();
@@ -88,10 +88,10 @@ export async function askAssistantAction(raw: { message: string; history: Assist
     });
   } catch (err) {
     console.error("[assistant] model call failed", err);
-    if (err instanceof Anthropic.AuthenticationError) return { ok: false, error: "The assistant's model credentials are invalid. The store owner needs to check the configuration." };
-    if (err instanceof Anthropic.PermissionDeniedError) return { ok: false, error: "The assistant's model account isn't activated yet. The store owner needs to enable it." };
-    if (err instanceof Anthropic.RateLimitError) return { ok: false, error: "The assistant is busy right now — please try again in a moment." };
-    if (err instanceof Anthropic.APIError) return { ok: false, error: "The assistant couldn't reach its model. Please try again shortly." };
+    if (err instanceof OpenAI.AuthenticationError) return { ok: false, error: "The assistant's DeepSeek API key is invalid. The store owner needs to check the configuration." };
+    if (err instanceof OpenAI.PermissionDeniedError) return { ok: false, error: "The assistant's DeepSeek account doesn't have access to this model. The store owner needs to check their DeepSeek account." };
+    if (err instanceof OpenAI.RateLimitError) return { ok: false, error: "The assistant is busy right now — please try again in a moment." };
+    if (err instanceof OpenAI.APIError) return { ok: false, error: "The assistant couldn't reach its model. Please try again shortly." };
     return { ok: false, error: "Something went wrong while answering. Please try again." };
   }
 

@@ -1,71 +1,48 @@
 /**
- * Model client for the product assistant.
+ * Model client for the product assistant — DeepSeek, via its OpenAI-compatible
+ * API (https://api.deepseek.com/quick_start/first_api_call). Uses the official
+ * `openai` SDK: DeepSeek's endpoint speaks the same wire format, so only
+ * baseURL / apiKey / model id differ from talking to OpenAI itself.
  *
- * Provider resolution (first match wins):
- *   1. ANTHROPIC_API_KEY            → Anthropic API directly
- *   2. AI_GATEWAY_API_KEY           → Vercel AI Gateway (Anthropic Messages endpoint)
- *   3. Vercel OIDC token           → Vercel AI Gateway; on Vercel the token arrives per request
- *                                     (read via @vercel/oidc), locally from VERCEL_OIDC_TOKEN after
- *                                     `vercel env pull`
- *   none                            → assistant reports itself offline
- *
- * The gateway speaks the Anthropic Messages API, so the official SDK is used in
- * every case; only baseURL, key and the model id prefix differ.
+ * Chosen deliberately over a hosted-Anthropic route: this runs on the store
+ * owner's own DeepSeek key, so nothing here touches Vercel AI Gateway or
+ * Anthropic billing. The only cost is whatever DeepSeek charges that key's
+ * owner directly, at DeepSeek's per-token rates (see docs/DECISIONS.md).
  */
-import Anthropic from "@anthropic-ai/sdk";
-import { getVercelOidcToken } from "@vercel/oidc";
+import OpenAI from "openai";
 
-export const DEFAULT_MODEL = "claude-opus-5";
-const GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
-
-export type AiProvider = "anthropic" | "vercel-gateway";
+/** Cheapest current DeepSeek model that still supports tool calling and JSON mode. */
+export const DEFAULT_MODEL = "deepseek-v4-flash";
+const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 
 export interface AiConfig {
-  provider: AiProvider;
   model: string;
   apiKey: string;
-  baseURL?: string;
+  baseURL: string;
 }
 
+/** Resolves credentials from the environment. Requires DEEPSEEK_API_KEY. */
 export function resolveAiConfig(env: Record<string, string | undefined> = process.env): AiConfig | null {
+  const apiKey = env.DEEPSEEK_API_KEY?.trim();
+  if (!apiKey) return null;
   const model = env.AI_MODEL?.trim() || DEFAULT_MODEL;
-  if (env.ANTHROPIC_API_KEY?.trim()) return { provider: "anthropic", model, apiKey: env.ANTHROPIC_API_KEY.trim() };
-  const gatewayKey = env.AI_GATEWAY_API_KEY?.trim() || env.VERCEL_OIDC_TOKEN?.trim();
-  if (gatewayKey) return { provider: "vercel-gateway", model: model.includes("/") ? model : `anthropic/${model}`, apiKey: gatewayKey, baseURL: GATEWAY_BASE_URL };
-  return null;
+  const baseURL = env.AI_BASE_URL?.trim() || DEEPSEEK_BASE_URL;
+  return { model, apiKey, baseURL };
 }
 
-/** True when a model can be reached: explicit keys, or a Vercel deployment / local OIDC token. */
 export function isAssistantConfigured(env: Record<string, string | undefined> = process.env): boolean {
-  if (resolveAiConfig(env)) return true;
-  return env.VERCEL === "1"; // OIDC token is issued per request on Vercel
+  return resolveAiConfig(env) !== null;
 }
 
-/** Runtime token lookup: explicit gateway key, else the Vercel OIDC token (request header on Vercel, env locally). */
-async function resolveRuntimeConfig(env: Record<string, string | undefined>): Promise<AiConfig | null> {
-  const explicit = resolveAiConfig(env);
-  if (explicit) return explicit;
-  try {
-    const token = await getVercelOidcToken();
-    if (token) {
-      const model = env.AI_MODEL?.trim() || DEFAULT_MODEL;
-      return { provider: "vercel-gateway", model: model.includes("/") ? model : `anthropic/${model}`, apiKey: token, baseURL: GATEWAY_BASE_URL };
-    }
-  } catch {
-    // no OIDC context available (not on Vercel and no local token)
-  }
-  return null;
-}
+let cached: { key: string; client: OpenAI } | null = null;
 
-let cached: { key: string; client: Anthropic } | null = null;
-
-/** Returns a configured client and the model id to use with it, or null when no credentials exist. */
-export async function getAiClient(env: Record<string, string | undefined> = process.env): Promise<{ client: Anthropic; model: string; provider: AiProvider } | null> {
-  const cfg = await resolveRuntimeConfig(env);
+/** Returns a configured client and the model id to use with it, or null when DEEPSEEK_API_KEY is unset. */
+export function getAiClient(env: Record<string, string | undefined> = process.env): { client: OpenAI; model: string } | null {
+  const cfg = resolveAiConfig(env);
   if (!cfg) return null;
-  const key = `${cfg.provider}:${cfg.baseURL ?? ""}:${cfg.apiKey.slice(0, 24)}`;
+  const key = `${cfg.baseURL}:${cfg.apiKey}`;
   if (!cached || cached.key !== key) {
-    cached = { key, client: new Anthropic({ apiKey: cfg.apiKey, baseURL: cfg.baseURL, maxRetries: 2, timeout: 60_000 }) };
+    cached = { key, client: new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL, maxRetries: 2, timeout: 60_000 }) };
   }
-  return { client: cached.client, model: cfg.model, provider: cfg.provider };
+  return { client: cached.client, model: cfg.model };
 }

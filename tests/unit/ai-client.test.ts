@@ -1,26 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { isAssistantConfigured, resolveAiConfig } from "@/lib/ai/client";
+import { DEFAULT_MODEL, isAssistantConfigured, resolveAiConfig } from "@/lib/ai/client";
 
 describe("resolveAiConfig", () => {
-  it("prefers a direct Anthropic key", () => {
-    expect(resolveAiConfig({ ANTHROPIC_API_KEY: "sk-ant-x", VERCEL_OIDC_TOKEN: "oidc" })).toMatchObject({ provider: "anthropic", model: "claude-opus-5", apiKey: "sk-ant-x" });
+  it("resolves DeepSeek credentials with sensible defaults", () => {
+    expect(resolveAiConfig({ DEEPSEEK_API_KEY: "sk-deepseek-x" })).toEqual({ model: DEFAULT_MODEL, apiKey: "sk-deepseek-x", baseURL: "https://api.deepseek.com" });
   });
-  it("falls back to the Vercel AI Gateway with a prefixed model id", () => {
-    expect(resolveAiConfig({ AI_GATEWAY_API_KEY: "vck_x" })).toMatchObject({ provider: "vercel-gateway", model: "anthropic/claude-opus-5", baseURL: "https://ai-gateway.vercel.sh" });
-    expect(resolveAiConfig({ VERCEL_OIDC_TOKEN: "eyJ" })?.provider).toBe("vercel-gateway");
+
+  it("honours AI_MODEL and AI_BASE_URL overrides", () => {
+    expect(resolveAiConfig({ DEEPSEEK_API_KEY: "k", AI_MODEL: "deepseek-v4-pro" })?.model).toBe("deepseek-v4-pro");
+    expect(resolveAiConfig({ DEEPSEEK_API_KEY: "k", AI_BASE_URL: "https://example.test" })?.baseURL).toBe("https://example.test");
   });
-  it("honours AI_MODEL and does not double-prefix", () => {
-    expect(resolveAiConfig({ AI_GATEWAY_API_KEY: "k", AI_MODEL: "claude-sonnet-5" })?.model).toBe("anthropic/claude-sonnet-5");
-    expect(resolveAiConfig({ AI_GATEWAY_API_KEY: "k", AI_MODEL: "anthropic/claude-sonnet-5" })?.model).toBe("anthropic/claude-sonnet-5");
-    expect(resolveAiConfig({ ANTHROPIC_API_KEY: "k", AI_MODEL: "claude-sonnet-5" })?.model).toBe("claude-sonnet-5");
-  });
-  it("returns null with no credentials", () => {
+
+  it("treats a blank key as unset", () => {
+    expect(resolveAiConfig({ DEEPSEEK_API_KEY: "   " })).toBeNull();
     expect(resolveAiConfig({})).toBeNull();
-    expect(resolveAiConfig({ ANTHROPIC_API_KEY: "  " })).toBeNull();
   });
-  it("treats a Vercel deployment as configured (OIDC token arrives per request)", () => {
+});
+
+describe("isAssistantConfigured", () => {
+  it("is true only when DEEPSEEK_API_KEY is set", () => {
     expect(isAssistantConfigured({})).toBe(false);
-    expect(isAssistantConfigured({ VERCEL: "1" })).toBe(true);
-    expect(isAssistantConfigured({ ANTHROPIC_API_KEY: "k" })).toBe(true);
+    expect(isAssistantConfigured({ DEEPSEEK_API_KEY: "k" })).toBe(true);
+    // No implicit "configured because it's on Vercel" fallback — this runs on the
+    // store owner's own key, never on a hosted gateway.
+    expect(isAssistantConfigured({ VERCEL: "1" })).toBe(false);
   });
 });

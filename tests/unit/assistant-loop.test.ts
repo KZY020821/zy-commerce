@@ -1,8 +1,9 @@
 /**
- * Drives the assistant loop with a fake model client so the tool protocol,
- * the `respond` contract and the fallbacks are verified without network.
+ * Drives the assistant loop with a fake DeepSeek (OpenAI-compatible) client
+ * so the tool protocol, the `respond` contract and the fallbacks are
+ * verified without network.
  */
-import type Anthropic from "@anthropic-ai/sdk";
+import type OpenAI from "openai";
 import { describe, expect, it, vi } from "vitest";
 import { buildSystemPrompt, runAssistant, type AssistantStoreContext, type MessagesClient } from "@/lib/ai/assistant";
 import * as tools from "@/lib/ai/tools";
@@ -16,20 +17,37 @@ const store: AssistantStoreContext = {
   profile: { productCount: 2, categories: [{ slug: "paddles", name: "Paddles", productCount: 2, priceMin: 30000, priceMax: 90000, brands: ["Selkirk"], facets: [{ key: "Core Thickness", coverage: 2, values: ["16mm", "13mm"] }] }] },
 };
 
-function message(content: unknown[], stop: Anthropic.Message["stop_reason"] = "tool_use"): Anthropic.Message {
-  return { id: "msg", type: "message", role: "assistant", model: "fake", content, stop_reason: stop, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, server_tool_use: null, service_tier: null } } as unknown as Anthropic.Message;
+function toolCall(id: string, name: string, args: unknown): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall {
+  return { id, type: "function", function: { name, arguments: JSON.stringify(args) } };
 }
 
-function fakeClient(responses: Anthropic.Message[]): MessagesClient & { calls: Anthropic.MessageCreateParamsNonStreaming[] } {
-  const calls: Anthropic.MessageCreateParamsNonStreaming[] = [];
+function completion(over: { content?: string | null; tool_calls?: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[]; finish_reason?: string; refusal?: string | null }): OpenAI.Chat.Completions.ChatCompletion {
+  return {
+    id: "cmpl", object: "chat.completion", created: 0, model: "deepseek-v4-flash",
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: over.content ?? null, refusal: over.refusal ?? null, tool_calls: over.tool_calls } as OpenAI.Chat.Completions.ChatCompletionMessage,
+        finish_reason: (over.finish_reason ?? (over.tool_calls ? "tool_calls" : "stop")) as never,
+        logprobs: null,
+      },
+    ],
+    usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+  } as unknown as OpenAI.Chat.Completions.ChatCompletion;
+}
+
+function fakeClient(responses: OpenAI.Chat.Completions.ChatCompletion[]): MessagesClient & { calls: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming[] } {
+  const calls: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming[] = [];
   return {
     calls,
-    messages: {
-      create: async (params) => {
-        calls.push(params);
-        const next = responses.shift();
-        if (!next) throw new Error("fake client ran out of responses");
-        return next;
+    chat: {
+      completions: {
+        create: async (params) => {
+          calls.push(params);
+          const next = responses.shift();
+          if (!next) throw new Error("fake client ran out of responses");
+          return next;
+        },
       },
     },
   };
@@ -41,11 +59,11 @@ describe("runAssistant", () => {
   it("executes tool calls, feeds results back, and returns the structured respond payload", async () => {
     const runTool = vi.spyOn(tools, "runAssistantTool").mockResolvedValue(JSON.stringify({ total: 1, products: [{ sku: "SLK-001", name: "SLK Halo" }] }));
     const client = fakeClient([
-      message([{ type: "tool_use", id: "t1", name: "search_products", input: { query: "16mm paddle", category: "paddles", minPrice: null, maxPrice: null, inStockOnly: false } }]),
-      message([{ type: "tool_use", id: "t2", name: "respond", input: { answer: "The SLK Halo has a 16mm core.", suggestions: ["Compare with XL", "Show cheaper"], productSkus: ["SLK-001"] } }]),
+      completion({ tool_calls: [toolCall("t1", "search_products", { query: "16mm paddle", category: "paddles", minPrice: null, maxPrice: null, inStockOnly: false })] }),
+      completion({ tool_calls: [toolCall("t2", "respond", { answer: "The SLK Halo has a 16mm core.", suggestions: ["Compare with XL", "Show cheaper"], productSkus: ["SLK-001"] })] }),
     ]);
 
-    const reply = await runAssistant({ client, model: "fake", store, tools: toolCtx, history: [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }], userMessage: "which 16mm paddle?" });
+    const reply = await runAssistant({ client, model: "deepseek-v4-flash", store, tools: toolCtx, history: [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }], userMessage: "which 16mm paddle?" });
 
     expect(reply.answer).toBe("The SLK Halo has a 16mm core.");
     expect(reply.suggestions).toEqual(["Compare with XL", "Show cheaper"]);
@@ -53,51 +71,68 @@ describe("runAssistant", () => {
     expect(reply.toolCalls.map((t) => t.name)).toEqual(["search_products"]);
     expect(runTool).toHaveBeenCalledWith("search_products", expect.objectContaining({ query: "16mm paddle" }), toolCtx);
 
-    // Second request carries the assistant tool_use turn and a tool_result for it
+    // Second request carries the assistant tool_calls turn and a tool result message for it
     const second = client.calls[1]!;
-    expect(second.messages.at(-2)?.role).toBe("assistant");
+    expect(second.messages.at(-2)).toMatchObject({ role: "assistant" });
     const last = second.messages.at(-1)!;
-    expect(last.role).toBe("user");
-    expect((last.content as Anthropic.ToolResultBlockParam[])[0]).toMatchObject({ type: "tool_result", tool_use_id: "t1" });
-    // History and system prompt are passed on every call
-    expect(second.messages[0]).toEqual({ role: "user", content: "hi" });
-    expect(JSON.stringify(second.system)).toContain("Selkirk Demo");
-    expect(second.tools?.map((t) => (t as Anthropic.Tool).name)).toContain("respond");
+    expect(last).toMatchObject({ role: "tool", tool_call_id: "t1" });
+    // System prompt, full history and the tool schema are sent on every call
+    expect(second.messages[0]).toMatchObject({ role: "system" });
+    expect(second.messages[1]).toEqual({ role: "user", content: "hi" });
+    expect(String((second.messages[0] as { content: string }).content)).toContain("Selkirk Demo");
+    expect(second.tools?.filter((t) => t.type === "function").map((t) => t.function.name)).toContain("respond");
     runTool.mockRestore();
   });
 
   it("accepts a plain-text answer when the model skips the respond tool", async () => {
-    const client = fakeClient([message([{ type: "text", text: "Just text.", citations: null }], "end_turn")]);
-    const reply = await runAssistant({ client, model: "fake", store, tools: toolCtx, history: [], userMessage: "hello" });
+    const client = fakeClient([completion({ content: "Just text.", finish_reason: "stop" })]);
+    const reply = await runAssistant({ client, model: "deepseek-v4-flash", store, tools: toolCtx, history: [], userMessage: "hello" });
     expect(reply.answer).toBe("Just text.");
     expect(reply.suggestions).toEqual([]);
   });
 
-  it("returns a safe reply on refusal and never exposes tool errors", async () => {
-    const client = fakeClient([message([], "refusal")]);
-    const reply = await runAssistant({ client, model: "fake", store, tools: toolCtx, history: [], userMessage: "…" });
+  it("returns a safe reply on refusal or content_filter, and never exposes tool errors", async () => {
+    const client = fakeClient([completion({ refusal: "I can't help with that.", finish_reason: "stop" })]);
+    const reply = await runAssistant({ client, model: "deepseek-v4-flash", store, tools: toolCtx, history: [], userMessage: "…" });
     expect(reply.answer).toMatch(/can't help/i);
     expect(reply.suggestions.length).toBeGreaterThan(0);
+
+    const client2 = fakeClient([completion({ content: null, finish_reason: "content_filter" })]);
+    const reply2 = await runAssistant({ client: client2, model: "deepseek-v4-flash", store, tools: toolCtx, history: [], userMessage: "…" });
+    expect(reply2.answer).toMatch(/can't help/i);
   });
 
   it("marks failing tools as errors and still reaches a final answer", async () => {
     const runTool = vi.spyOn(tools, "runAssistantTool").mockRejectedValue(new Error("db down"));
     const client = fakeClient([
-      message([{ type: "tool_use", id: "t1", name: "get_product", input: { skuOrSlug: "X" } }]),
-      message([{ type: "tool_use", id: "t2", name: "respond", input: { answer: "Sorry, I couldn't look that up.", suggestions: [], productSkus: [] } }]),
+      completion({ tool_calls: [toolCall("t1", "get_product", { skuOrSlug: "X" })] }),
+      completion({ tool_calls: [toolCall("t2", "respond", { answer: "Sorry, I couldn't look that up.", suggestions: [], productSkus: [] })] }),
     ]);
-    const reply = await runAssistant({ client, model: "fake", store, tools: toolCtx, history: [], userMessage: "details of X" });
+    const reply = await runAssistant({ client, model: "deepseek-v4-flash", store, tools: toolCtx, history: [], userMessage: "details of X" });
     expect(reply.answer).toMatch(/couldn't/i);
-    const result = (client.calls[1]!.messages.at(-1)!.content as Anthropic.ToolResultBlockParam[])[0]!;
-    expect(result.is_error).toBe(true);
+    const result = client.calls[1]!.messages.at(-1) as { role: string; content: string };
+    expect(result.role).toBe("tool");
+    expect(JSON.parse(result.content)).toMatchObject({ error: "db down" });
+    runTool.mockRestore();
+  });
+
+  it("tolerates malformed JSON arguments from the model instead of throwing", async () => {
+    const runTool = vi.spyOn(tools, "runAssistantTool").mockResolvedValue("{}");
+    const client = fakeClient([
+      { ...completion({ tool_calls: [{ id: "t1", type: "function", function: { name: "list_categories", arguments: "{not json" } }] }) },
+      completion({ tool_calls: [toolCall("t2", "respond", { answer: "ok", suggestions: [], productSkus: [] })] }),
+    ]);
+    const reply = await runAssistant({ client, model: "deepseek-v4-flash", store, tools: toolCtx, history: [], userMessage: "hi" });
+    expect(reply.answer).toBe("ok");
+    expect(runTool).toHaveBeenCalledWith("list_categories", {}, toolCtx);
     runTool.mockRestore();
   });
 
   it("gives up gracefully after the tool-round limit", async () => {
     vi.spyOn(tools, "runAssistantTool").mockResolvedValue("{}");
-    const loop = Array.from({ length: 10 }, (_, i) => message([{ type: "tool_use", id: `t${i}`, name: "list_categories", input: {} }]));
+    const loop = Array.from({ length: 10 }, (_, i) => completion({ tool_calls: [toolCall(`t${i}`, "list_categories", {})] }));
     const client = fakeClient(loop);
-    const reply = await runAssistant({ client, model: "fake", store, tools: toolCtx, history: [], userMessage: "loop" });
+    const reply = await runAssistant({ client, model: "deepseek-v4-flash", store, tools: toolCtx, history: [], userMessage: "loop" });
     expect(reply.answer).toMatch(/couldn't put together/i);
     expect(client.calls.length).toBeLessThanOrEqual(8);
     vi.restoreAllMocks();
