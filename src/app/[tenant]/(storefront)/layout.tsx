@@ -2,17 +2,14 @@ import { AssistantWidget } from "@/components/storefront/assistant-widget";
 import { StorefrontFooter } from "@/components/storefront/footer";
 import { StorefrontHeader } from "@/components/storefront/header";
 import { isAssistantConfigured } from "@/lib/ai/client";
+import { buildStarterSuggestions } from "@/lib/ai/starters";
 import { getTenantDb, requireCurrentTenant } from "@/lib/tenant/current";
 
 export default async function StorefrontLayout({ children }: { children: React.ReactNode }) {
   const tenant = await requireCurrentTenant();
   const db = await getTenantDb();
   const categories = await db.category.findMany({ where: { parentId: null }, orderBy: [{ sortOrder: "asc" }], take: 3, select: { name: true } });
-  const starters = [
-    "Help me choose",
-    ...categories.slice(0, 2).map((c) => `Show me ${c.name.toLowerCase()}`),
-    "What's on sale or in stock?",
-  ].slice(0, 4);
+  const starters = buildStarterSuggestions(categories.map((c) => c.name));
 
   return (
     <>

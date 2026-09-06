@@ -5,7 +5,8 @@
  *
  * Creates:
  *   - one platform Super Admin (SEED_SUPER_ADMIN_EMAIL)
- *   - optionally a "demo" tenant with a Store Admin (SEED_DEMO_TENANT=true)
+ *   - the demo tenants listed in DEMO_STORES below, each with a Store Admin
+ *     and its imported catalogue (skip them all with SEED_DEMO_TENANT=false)
  *
  * Passwords come from SEED_*_PASSWORD; when blank a random one is generated
  * and printed ONCE. Existing accounts are never overwritten.
@@ -18,10 +19,63 @@ import { UserRole } from "../src/generated/prisma/enums";
 import { hashPassword, PASSWORD_MIN_LENGTH } from "../src/lib/auth/password";
 import { buildPoolSettings, resolveDirectDatabaseUrl } from "../src/lib/db/connection";
 import { isValidTenantSlug, platformOrigin, tenantOrigin } from "../src/lib/tenant/resolve";
-import catalogJson from "./seed-data/selkirk.json" with { type: "json" };
+import selkirkJson from "./seed-data/selkirk.json" with { type: "json" };
+import nikeJson from "./seed-data/nike.json" with { type: "json" };
 import type { SeedCatalog } from "./seed-data/types";
 
-const catalog = catalogJson as SeedCatalog;
+/**
+ * Demo tenants. Each is a fully independent store: its own catalogue,
+ * currency, branding and assistant — which is also what proves the
+ * multi-tenancy story to a prospective client.
+ */
+interface DemoStore {
+  slug: string;
+  envPrefix: string;
+  name: string;
+  brandColor: string;
+  assistantName: string;
+  assistantGreeting: string;
+  contactEmail: string;
+  adminEmail: string;
+  currency: string;
+  country: string;
+  locale: string;
+  shippingFlatRate: number;
+  catalog: SeedCatalog;
+}
+
+const DEMO_STORES: DemoStore[] = [
+  {
+    slug: "demo",
+    envPrefix: "SEED_DEMO",
+    name: "Selkirk Demo",
+    brandColor: "#111111",
+    assistantName: "Selkirk Fit Assistant",
+    assistantGreeting: "Hi! I know every product in this store. Tell me how you play or what you're after and I'll help you find the right fit.",
+    contactEmail: "hello@demo.example.com",
+    adminEmail: "admin@demo.example.com",
+    currency: "MYR",
+    country: "MY",
+    locale: "ms-MY",
+    shippingFlatRate: 500,
+    catalog: selkirkJson as unknown as SeedCatalog,
+  },
+  {
+    slug: "nike",
+    envPrefix: "SEED_NIKE",
+    name: "Nike Demo",
+    brandColor: "#111111",
+    assistantName: "Nike Game Fit",
+    assistantGreeting: "Hey! Tell me how you play or what you need on court, and I'll find the right gear from this store.",
+    contactEmail: "hello@nike.example.com",
+    adminEmail: "admin@nike.example.com",
+    currency: "USD",
+    country: "US",
+    locale: "en-US",
+    shippingFlatRate: 700,
+    catalog: nikeJson as unknown as SeedCatalog,
+  },
+];
 
 const connectionString = resolveDirectDatabaseUrl();
 if (!connectionString) throw new Error("No database URL set (DIRECT_URL, POSTGRES_URL_NON_POOLING or DATABASE_URL)");
@@ -71,67 +125,64 @@ async function seedSuperAdmin() {
   if (generated) notes.push(`Super admin password (${email}): ${password}`);
 }
 
-async function seedDemoTenant() {
+async function seedDemoStore(store: DemoStore) {
   if (readEnv("SEED_DEMO_TENANT", "true") !== "true") return;
+  if (!isValidTenantSlug(store.slug)) throw new Error(`Invalid demo slug: ${store.slug}`);
 
-  const slug = "demo";
-  if (!isValidTenantSlug(slug)) throw new Error(`Invalid demo slug: ${slug}`);
+  const p = store.envPrefix;
+  const storeName = readEnv(`${p}_STORE_NAME`, store.name);
+  const brandColor = readEnv(`${p}_BRAND_COLOR`, store.brandColor);
+  const assistantName = readEnv(`${p}_ASSISTANT_NAME`, store.assistantName);
+  const assistantGreeting = readEnv(`${p}_ASSISTANT_GREETING`, store.assistantGreeting);
 
-  const storeName = readEnv("SEED_DEMO_STORE_NAME", "Selkirk Demo");
-  const brandColor = readEnv("SEED_DEMO_BRAND_COLOR", "#111111");
-  const assistantName = readEnv("SEED_DEMO_ASSISTANT_NAME", "Selkirk Fit Assistant");
-  const assistantGreeting = readEnv(
-    "SEED_DEMO_ASSISTANT_GREETING",
-    "Hi! I know every product in this store. Tell me how you play or what you're after and I'll help you find the right fit.",
-  );
   const tenant = await db.tenant.upsert({
-    where: { slug },
+    where: { slug: store.slug },
     // Name, branding and assistant settings follow the seed until the Phase 5 settings UI exists.
     update: { name: storeName, primaryColor: brandColor, assistantName, assistantGreeting },
     create: {
-      slug,
+      slug: store.slug,
       name: storeName,
       status: "ACTIVE",
       primaryColor: brandColor,
       assistantName,
       assistantGreeting,
-      contactEmail: "hello@demo.example.com",
-      currency: readEnv("SEED_DEMO_CURRENCY", "USD").toUpperCase(),
-      country: readEnv("SEED_DEMO_COUNTRY", "US").toUpperCase(),
-      locale: readEnv("SEED_DEMO_LOCALE", "en-US"),
-      shippingFlatRate: 500,
+      contactEmail: store.contactEmail,
+      currency: readEnv(`${p}_CURRENCY`, store.currency).toUpperCase(),
+      country: readEnv(`${p}_COUNTRY`, store.country).toUpperCase(),
+      locale: readEnv(`${p}_LOCALE`, store.locale),
+      shippingFlatRate: store.shippingFlatRate,
       taxRateBps: 0,
     },
   });
   console.log(`✓ Tenant "${tenant.name}" ready at ${tenantOrigin(tenant.slug)}`);
 
-  if (readEnv("SEED_DEMO_CATALOG", "true") === "true") await seedDemoCatalog(tenant.id, tenant.catalogFingerprint);
+  if (readEnv(`${p}_CATALOG`, "true") === "true") await seedDemoCatalog(tenant.id, tenant.catalogFingerprint, store.catalog);
 
-  const email = readEnv("SEED_DEMO_ADMIN_EMAIL", "admin@demo.example.com").toLowerCase();
+  const email = readEnv(`${p}_ADMIN_EMAIL`, store.adminEmail).toLowerCase();
   const existing = await db.user.findUnique({ where: { tenantId_email: { tenantId: tenant.id, email } } });
   if (existing) {
     console.log(`✓ Store admin already exists: ${email}`);
     return;
   }
-  const cred = passwordFromEnv("SEED_DEMO_ADMIN_PASSWORD");
+  const cred = passwordFromEnv(`${p}_ADMIN_PASSWORD`);
   if (!cred) return;
   const { password, generated } = cred;
   await db.user.create({
-    data: { tenantId: tenant.id, email, name: "Demo Admin", role: UserRole.STORE_ADMIN, passwordHash: await hashPassword(password) },
+    data: { tenantId: tenant.id, email, name: `${storeName} Admin`, role: UserRole.STORE_ADMIN, passwordHash: await hashPassword(password) },
   });
   console.log(`+ Created store admin: ${email}`);
-  if (generated) notes.push(`Demo store admin password (${email}): ${password}`);
+  if (generated) notes.push(`${storeName} admin password (${email}): ${password}`);
 }
 
 /**
- * Loads the imported catalogue (prisma/seed-data/selkirk.json, built by
- * scripts/import-shopify-catalog.ts) into the demo tenant.
+ * Loads one imported catalogue (prisma/seed-data/*.json, built by the import
+ * scripts) into a tenant.
  *
  * Idempotent and fast enough for a Vercel build: the file's SHA-1 is stored on
  * the tenant and an unchanged catalogue is skipped entirely; otherwise
  * products are processed 8 at a time with bulk inserts for images/variants.
  */
-async function seedDemoCatalog(tenantId: string, previousFingerprint: string | null) {
+async function seedDemoCatalog(tenantId: string, previousFingerprint: string | null, catalog: SeedCatalog) {
   const fingerprint = createHash("sha1").update(JSON.stringify(catalog)).digest("hex");
   if (previousFingerprint === fingerprint) {
     console.log(`✓ Catalogue unchanged (${catalog.products.length} products) — skipped`);
@@ -200,12 +251,13 @@ async function seedDemoCatalog(tenantId: string, previousFingerprint: string | n
 
 async function main() {
   await seedSuperAdmin();
-  await seedDemoTenant();
+  for (const store of DEMO_STORES) await seedDemoStore(store);
 
   console.log("\nURLs");
   console.log(`  Platform admin : ${platformOrigin()}/platform/login`);
-  console.log(`  Demo storefront: ${tenantOrigin("demo")}/`);
-  console.log(`  Demo admin     : ${tenantOrigin("demo")}/admin/login`);
+  for (const store of DEMO_STORES) {
+    console.log(`  ${store.name.padEnd(14)}: ${tenantOrigin(store.slug)}/  (admin: ${tenantOrigin(store.slug)}/admin/login)`);
+  }
 
   if (notes.length) {
     console.log("\nGenerated credentials (shown once — store them now):");

@@ -9,8 +9,10 @@ The build specification lives in [`docs/crm-platform-build-spec.md`](docs/crm-pl
 | What | URL |
 | --- | --- |
 | Platform (landing + super admin) | https://zy-commerce.vercel.app · https://zy-commerce.vercel.app/platform/login |
-| Demo store ("Selkirk Demo", full Selkirk Sport catalogue) | https://zy-commerce-demo.vercel.app |
-| Demo store admin | https://zy-commerce-demo.vercel.app/admin/login |
+| Demo store 1 — "Selkirk Demo" (Selkirk Sport pickleball catalogue, MYR) | https://zy-commerce-demo.vercel.app |
+| Demo store 1 admin | https://zy-commerce-demo.vercel.app/admin/login |
+| Demo store 2 — "Nike Demo" (Nike basketball catalogue, USD) | https://zy-commerce-nike.vercel.app |
+| Demo store 2 admin | https://zy-commerce-nike.vercel.app/admin/login |
 
 Hosted on Vercel (team `kzy02`, project `zy-commerce`, functions in Singapore) with a Supabase Postgres (`zy-commerce-db`, Singapore) provisioned through the Vercel Marketplace. Every push to `main` deploys production; the build applies migrations and runs the idempotent seed. Additional tenants on `*.vercel.app` need an alias domain added to the project and listed in `TENANT_HOST_ALIASES`; with a custom domain, wildcard subdomains work automatically.
 
@@ -22,15 +24,22 @@ Every storefront ships with a chat assistant (bottom-right) that answers custome
 - Credentials: set `DEEPSEEK_API_KEY` to your own [DeepSeek API key](https://platform.deepseek.com/api_keys). No Vercel AI Gateway, no Anthropic billing, no card on file required — usage is billed directly to whoever's key it is, at DeepSeek's own rates. Without a key the widget shows an "offline" state and the rest of the store works normally.
 - Model: `deepseek-v4-flash` by default (cheapest current model with tool calling and JSON mode); override with `AI_MODEL=deepseek-v4-pro` for higher-quality, pricier answers.
 - Guard rails: tenant-scoped queries only, rate-limited per IP and session, every conversation logged under Admin → Conversations.
+- **Off-topic guard** ([`src/lib/ai/topic-guard.ts`](src/lib/ai/topic-guard.ts)): questions unrelated to the store are turned away *in code, before any model call*, so they cost zero tokens. The vocabulary is built per request from that store's own categories, brands, product names and specification values, so it is not tied to any one product type. Blocked messages get a fixed reply plus the store's sample questions, and are still logged so the owner can see what was asked.
 - Per-store settings on `Tenant`: `assistantEnabled`, `assistantName`, `assistantGreeting`.
 
 ## Importing a catalogue
 
-`scripts/import-shopify-catalog.ts` pulls any Shopify store's public catalogue (names, options, variants, prices, images, and the specification block from each product page) into a seed file the platform loads for a tenant. The demo uses Selkirk Sport:
+Two importers write the same seed-file format ([`prisma/seed-data/types.ts`](prisma/seed-data/types.ts)), which the seed then loads into a tenant:
 
 ```bash
+# Any Shopify store — feed + the spec block on each product page
 pnpm tsx scripts/import-shopify-catalog.ts --store www.selkirk.com --currency MYR
+
+# Nike — the JSON nike.com embeds in its own category and product pages
+pnpm tsx scripts/import-nike-catalog.ts
 ```
+
+Both cache fetched pages under `node_modules/.cache/zy-import`, so re-runs are fast and polite. Demo tenants are declared in `DEMO_STORES` in [`prisma/seed.ts`](prisma/seed.ts) — add an entry to stand up another store.
 
 The seed applies it idempotently (a fingerprint on the tenant skips unchanged files). Descriptions are generated from extracted facts; images link to the source CDN. For a paying client, replace it with their own product data and media.
 
@@ -80,8 +89,10 @@ Then open:
 | --- | --- |
 | http://localhost:3000/ | Platform landing page |
 | http://localhost:3000/platform/login | Super-admin login (tenant list) |
-| http://demo.localhost:3000/ | Demo tenant storefront |
-| http://demo.localhost:3000/admin/login | Demo tenant store-admin login |
+| http://demo.localhost:3000/ | Selkirk Demo storefront |
+| http://demo.localhost:3000/admin/login | Selkirk Demo store-admin login |
+| http://nike.localhost:3000/ | Nike Demo storefront |
+| http://nike.localhost:3000/admin/login | Nike Demo store-admin login |
 
 Chrome, Firefox and Edge resolve `*.localhost` to 127.0.0.1 without configuration. Safari does not: add `127.0.0.1 demo.localhost` to `/etc/hosts` or use another browser.
 

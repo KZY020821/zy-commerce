@@ -13,6 +13,8 @@ import { z } from "zod";
 import { getAiClient, isAssistantConfigured } from "@/lib/ai/client";
 import { buildCatalogProfile } from "@/lib/ai/catalog-profile";
 import { runAssistant, type AssistantTurn } from "@/lib/ai/assistant";
+import { buildStarterSuggestions } from "@/lib/ai/starters";
+import { buildStoreVocabulary, classifyMessage, OFF_TOPIC_REPLY } from "@/lib/ai/topic-guard";
 import { checkRateLimit, clientIpFromHeaders } from "@/lib/auth/rate-limit";
 import { getTenantDb, requireCurrentTenant } from "@/lib/tenant/current";
 
@@ -51,6 +53,46 @@ async function getOrCreateSessionToken(): Promise<string> {
   return token;
 }
 
+interface LoggedAnswer {
+  answer: string;
+  suggestions: string[];
+  productSkus: string[];
+  toolCalls: string[];
+  /** Set when the message was turned away by the off-topic guard (no model call). */
+  blocked?: string;
+}
+
+/**
+ * Appends the exchange to the tenant's conversation log. Best effort: a
+ * logging failure must never cost the customer their answer. Off-topic
+ * messages are logged too, so the store owner can see what people asked and
+ * tune the guard or the catalogue.
+ */
+async function logConversation(
+  db: Awaited<ReturnType<typeof getTenantDb>>,
+  tenantId: string,
+  sessionToken: string,
+  userMessage: string,
+  answer: LoggedAnswer,
+): Promise<void> {
+  try {
+    const now = new Date().toISOString();
+    const newTurns = [
+      { role: "user", content: userMessage, at: now },
+      { role: "assistant", content: answer.answer, at: now, suggestions: answer.suggestions, productSkus: answer.productSkus, toolCalls: answer.toolCalls, ...(answer.blocked ? { blocked: answer.blocked } : {}) },
+    ];
+    const existing = await db.chatConversation.findUnique({ where: { tenantId_sessionToken: { tenantId, sessionToken } } });
+    if (existing) {
+      const prev = Array.isArray(existing.messages) ? (existing.messages as unknown[]) : [];
+      await db.chatConversation.update({ where: { id: existing.id }, data: { messages: [...prev, ...newTurns] as Prisma.InputJsonValue, messageCount: existing.messageCount + 2, lastMessageAt: new Date() } });
+    } else {
+      await db.chatConversation.create({ data: { tenantId, sessionToken, messages: newTurns as Prisma.InputJsonValue, messageCount: 2 } });
+    }
+  } catch (err) {
+    console.error("[assistant] failed to log conversation", err);
+  }
+}
+
 export async function askAssistantAction(raw: { message: string; history: AssistantTurn[] }): Promise<AssistantActionResult> {
   const parsed = inputSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: "Please enter a message (up to 1000 characters)." };
@@ -70,11 +112,24 @@ export async function askAssistantAction(raw: { message: string; history: Assist
   const db = await getTenantDb();
   const rows = await db.product.findMany({
     where: { active: true },
-    select: { price: true, brand: true, specs: true, active: true, category: { select: { slug: true, name: true } } },
+    select: { name: true, price: true, brand: true, specs: true, active: true, category: { select: { slug: true, name: true } } },
   });
   const profile = buildCatalogProfile(
     rows.map((r) => ({ categorySlug: r.category?.slug ?? null, categoryName: r.category?.name ?? null, price: r.price, brand: r.brand, specs: (r.specs as Record<string, unknown> | null) ?? null, active: r.active })),
   );
+
+  // Off-topic guard: decided here, in code, so an unrelated question never
+  // reaches the model and costs nothing. Runs after the profile is built
+  // because the vocabulary is derived from this store's own catalogue.
+  const categoryNames = profile.categories.map((c) => c.name);
+  const starters = buildStarterSuggestions(categoryNames);
+  const verdict = classifyMessage(parsed.data.message, buildStoreVocabulary({ storeName: tenant.name, profile, productNames: rows.map((r) => r.name) }), {
+    hasHistory: parsed.data.history.length > 0,
+  });
+  if (!verdict.onTopic) {
+    await logConversation(db, tenant.id, sessionToken, parsed.data.message, { answer: OFF_TOPIC_REPLY, suggestions: starters, productSkus: [], toolCalls: [], blocked: verdict.reason });
+    return { ok: true, answer: OFF_TOPIC_REPLY, suggestions: starters, products: [] };
+  }
 
   let reply;
   try {
@@ -104,23 +159,12 @@ export async function askAssistantAction(raw: { message: string; history: Assist
         .map((p) => ({ sku: p.sku, slug: p.slug, name: p.name, price: p.price, currency: p.currency, hasVariants: p.hasVariants, imageUrl: p.images[0]?.url ?? null, stockQuantity: p.stockQuantity, lowStockThreshold: p.lowStockThreshold }))
     : [];
 
-  // Append-only conversation log (best effort — never fail the reply over logging).
-  try {
-    const now = new Date().toISOString();
-    const newTurns = [
-      { role: "user", content: parsed.data.message, at: now },
-      { role: "assistant", content: reply.answer, at: now, suggestions: reply.suggestions, productSkus: reply.productSkus, toolCalls: reply.toolCalls.map((t) => t.name) },
-    ];
-    const existing = await db.chatConversation.findUnique({ where: { tenantId_sessionToken: { tenantId: tenant.id, sessionToken } } });
-    if (existing) {
-      const prev = Array.isArray(existing.messages) ? (existing.messages as unknown[]) : [];
-      await db.chatConversation.update({ where: { id: existing.id }, data: { messages: [...prev, ...newTurns] as Prisma.InputJsonValue, messageCount: existing.messageCount + 2, lastMessageAt: new Date() } });
-    } else {
-      await db.chatConversation.create({ data: { tenantId: tenant.id, sessionToken, messages: newTurns as Prisma.InputJsonValue, messageCount: 2 } });
-    }
-  } catch (err) {
-    console.error("[assistant] failed to log conversation", err);
-  }
+  await logConversation(db, tenant.id, sessionToken, parsed.data.message, {
+    answer: reply.answer,
+    suggestions: reply.suggestions,
+    productSkus: reply.productSkus,
+    toolCalls: reply.toolCalls.map((t) => t.name),
+  });
 
   return { ok: true, answer: reply.answer, suggestions: reply.suggestions, products };
 }
