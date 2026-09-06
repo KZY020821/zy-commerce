@@ -40,9 +40,28 @@ export interface SslSetting {
 }
 
 export interface PoolSettings {
+  /** The URL with ssl* / uselibpqcompat params removed, so `ssl` below is authoritative. */
   connectionString: string;
   ssl: SslSetting | false;
   max: number;
+}
+
+const SSL_PARAMS = new Set(["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat"]);
+
+/**
+ * Removes TLS-related query params textually (no URL re-encoding, so unusual
+ * characters in the password survive). node-postgres lets `sslmode` in the
+ * URL override an explicit `ssl` option, which is exactly what we don't want.
+ */
+export function stripSslParams(connectionString: string): string {
+  const q = connectionString.indexOf("?");
+  if (q === -1) return connectionString;
+  const base = connectionString.slice(0, q);
+  const kept = connectionString
+    .slice(q + 1)
+    .split("&")
+    .filter((pair) => pair.length > 0 && !SSL_PARAMS.has(pair.split("=")[0]!.toLowerCase()));
+  return kept.length ? `${base}?${kept.join("&")}` : base;
 }
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "db"]);
@@ -93,5 +112,5 @@ export function buildPoolSettings(connectionString: string, env: EnvLike = proce
   const fromEnv = Number(env.DATABASE_POOL_MAX);
   const max = Number.isInteger(fromEnv) && fromEnv > 0 ? fromEnv : env.VERCEL ? 5 : 10;
 
-  return { connectionString, ssl, max };
+  return { connectionString: stripSslParams(connectionString), ssl, max };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPoolSettings, resolveDirectDatabaseUrl, resolveRuntimeDatabaseUrl } from "@/lib/db/connection";
+import { buildPoolSettings, resolveDirectDatabaseUrl, resolveRuntimeDatabaseUrl, stripSslParams } from "@/lib/db/connection";
 
 describe("database URL resolution", () => {
   it("uses DATABASE_URL for both roles locally", () => {
@@ -59,8 +59,19 @@ describe("buildPoolSettings", () => {
     expect(buildPoolSettings("postgresql://u:p@localhost/db", { DATABASE_POOL_MAX: "nope" }).max).toBe(10);
   });
 
-  it("passes the connection string through unchanged", () => {
-    const url = "postgresql://u:p@host/db?pgbouncer=true&sslmode=require";
-    expect(buildPoolSettings(url, base).connectionString).toBe(url);
+  it("strips ssl params from the connection string so the explicit ssl option wins", () => {
+    const url = "postgresql://u:p@host/db?pgbouncer=true&sslmode=require&connect_timeout=15";
+    expect(buildPoolSettings(url, base).connectionString).toBe("postgresql://u:p@host/db?pgbouncer=true&connect_timeout=15");
+    expect(buildPoolSettings("postgresql://u:p@host/db?sslmode=require", base).connectionString).toBe("postgresql://u:p@host/db");
+    expect(buildPoolSettings("postgresql://u:p@host/db", base).connectionString).toBe("postgresql://u:p@host/db");
+  });
+});
+
+describe("stripSslParams", () => {
+  it("removes only TLS-related params and never re-encodes the rest", () => {
+    const weird = "postgresql://u:p%40ss%26word@host:6543/db?sslmode=require&pgbouncer=true&sslrootcert=/x.crt&uselibpqcompat=true&schema=public";
+    expect(stripSslParams(weird)).toBe("postgresql://u:p%40ss%26word@host:6543/db?pgbouncer=true&schema=public");
+    expect(stripSslParams("postgresql://u:p@host/db?SSLMODE=verify-full")).toBe("postgresql://u:p@host/db");
+    expect(stripSslParams("postgresql://u:p@host/db?")).toBe("postgresql://u:p@host/db");
   });
 });
