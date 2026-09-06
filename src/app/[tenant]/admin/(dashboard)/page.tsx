@@ -10,21 +10,23 @@ export const metadata: Metadata = { title: "Dashboard" };
 export default async function AdminDashboardPage() {
   const { tenant } = await requireStoreAdmin(); // re-checked per page, not just in the layout (spec §9)
   const db = await getTenantDb();
-  const [products, categories, orders, customers] = await Promise.all([
+  const [products, categories, orders, customers, conversations] = await Promise.all([
     db.product.count(),
     db.category.count(),
     db.order.count(),
     db.customer.count(),
+    db.chatConversation.count(),
   ]);
 
   return (
     <>
       <PageHeader title="Dashboard" description={`Overview for ${tenant.name}`} />
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard label="Products" value={products} />
         <StatCard label="Categories" value={categories} />
         <StatCard label="Orders" value={orders} />
         <StatCard label="Customers" value={customers} />
+        <StatCard label="Assistant chats" value={conversations} hint="See Conversations" />
       </div>
       <Card className="mt-6">
         <CardHeader>

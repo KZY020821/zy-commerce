@@ -1,4 +1,4 @@
-import type { Address, Cart, CartItem, Category, Customer, Order, OrderItem, OrderStatusEvent, Payment, Product, ProductImage, ProductVariant, Tenant, User } from "@/generated/prisma/client";
+import type { Address, Cart, CartItem, Category, ChatConversation, Customer, Order, OrderItem, OrderStatusEvent, Payment, Product, ProductImage, ProductVariant, Tenant, User } from "@/generated/prisma/client";
 import { unscopedDb } from "@/lib/db/prisma";
 
 export async function resetDatabase(): Promise<void> {
@@ -21,6 +21,7 @@ export interface TenantFixture {
   orderItem: OrderItem;
   statusEvent: OrderStatusEvent;
   payment: Payment;
+  conversation: ChatConversation;
 }
 
 /** One row in every tenant-scoped table, all owned by a fresh tenant. */
@@ -69,7 +70,11 @@ export async function createTenantFixture(slug: string, name: string): Promise<T
     data: { tenantId: tid, orderId: order.id, stripePaymentIntentId: `pi_${slug}`, status: "SUCCEEDED", amount: 2499, currency: "USD" },
   });
 
-  return { tenant, adminUser, customer, address, category, product, variant, image, cart, cartItem, order, orderItem, statusEvent, payment };
+  const conversation = await db.chatConversation.create({
+    data: { tenantId: tid, sessionToken: `${slug}-chat-session`, messages: [{ role: "user", content: "hi" }], messageCount: 1 },
+  });
+
+  return { tenant, adminUser, customer, address, category, product, variant, image, cart, cartItem, order, orderItem, statusEvent, payment, conversation };
 }
 
 export function delegateName(model: string): string {

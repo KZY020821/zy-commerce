@@ -12,6 +12,7 @@ Read `docs/crm-platform-build-spec.md` (the spec) and `docs/DECISIONS.md` (what 
 - **Validate all input with Zod** at the Server Action / route handler boundary.
 - **Order status changes** go through `assertTransition()` in `src/lib/orders/status.ts` and always append an `OrderStatusEvent`.
 - **Money is integer minor units**; use `src/lib/money`.
+- **Product assistant** (`src/lib/ai`): tools must use the tenant-scoped client passed in `ToolContext`; the model must finish with the `respond` tool; never call the model from client components. Model client via `getAiClient()` only. Structured product data lives in `Product.specs` / `ProductVariant.attributes` — keep keys Title Case (`normalizeSpecKey`).
 - Work phase by phase (spec §12). Commit at the end of each phase.
 
 ## Commands

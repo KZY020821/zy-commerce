@@ -27,6 +27,7 @@ export const TENANT_SCOPED_MODELS = [
   "OrderItem",
   "OrderStatusEvent",
   "Payment",
+  "ChatConversation",
 ] as const satisfies readonly Prisma.ModelName[];
 
 /** Models deliberately without a tenantId column. */

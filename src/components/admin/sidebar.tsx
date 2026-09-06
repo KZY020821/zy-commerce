@@ -16,6 +16,7 @@ const NAV: NavItem[] = [
   { href: "/admin/products", label: "Products", phase: 1 },
   { href: "/admin/categories", label: "Categories", phase: 1 },
   { href: "/admin/orders", label: "Orders", phase: 4 },
+  { href: "/admin/conversations", label: "Conversations" },
   { href: "/admin/settings", label: "Settings", phase: 5 },
 ];
 

@@ -90,6 +90,15 @@ model Tenant {
   /// Last assigned human-friendly order number for this tenant (atomic increment).
   orderSequence Int @default(0)
 
+  // Product assistant (storefront chatbot) settings
+  assistantEnabled  Boolean @default(true)
+  assistantName     String  @default("Product Assistant")
+  /// Optional opening line; when null a generic greeting is generated from the catalogue.
+  assistantGreeting String?
+
+  /// SHA-1 of the last imported catalogue file; lets the seed skip an unchanged import.
+  catalogFingerprint String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -106,6 +115,7 @@ model Tenant {
   orderItems        OrderItem[]
   orderStatusEvents OrderStatusEvent[]
   payments          Payment[]
+  chatConversations ChatConversation[]
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +218,11 @@ model Product {
   name        String
   slug        String
   description String? @db.Text
+  brand       String?
+  /// Structured, machine-readable attributes ({"Core Thickness":"16mm", ...}).
+  /// Populated by the catalogue importer or auto-extracted from the description;
+  /// this is what the product assistant reasons over, for any product type.
+  specs       Json?
   /// Unique per tenant (spec §7.1). When hasVariants=true this is the parent SKU
   /// and stock is tracked on ProductVariant rows instead.
   sku         String
@@ -408,6 +423,29 @@ model OrderStatusEvent {
   createdBy User?  @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([orderId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Product assistant
+// ---------------------------------------------------------------------------
+
+/// One storefront chat thread (anonymous, keyed by an httpOnly cookie token).
+/// Messages are stored as an append-only JSON array so the admin can review
+/// what customers ask and which products were recommended.
+model ChatConversation {
+  id            String   @id @default(cuid())
+  tenantId      String
+  sessionToken  String
+  messages      Json
+  messageCount  Int      @default(0)
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, sessionToken])
+  @@index([tenantId, lastMessageAt])
 }
 
 model Payment {

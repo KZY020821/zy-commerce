@@ -10,6 +10,8 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       // Vercel Blob (Phase 1 image uploads)
       { protocol: "https", hostname: "*.public.blob.vercel-storage.com" },
+      // Imported demo catalogues reference the source store's Shopify CDN
+      { protocol: "https", hostname: "cdn.shopify.com" },
     ],
   },
 };

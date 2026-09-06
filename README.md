@@ -9,18 +9,38 @@ The build specification lives in [`docs/crm-platform-build-spec.md`](docs/crm-pl
 | What | URL |
 | --- | --- |
 | Platform (landing + super admin) | https://zy-commerce.vercel.app · https://zy-commerce.vercel.app/platform/login |
-| Demo store | https://zy-commerce-demo.vercel.app |
+| Demo store ("Selkirk Demo", full Selkirk Sport catalogue) | https://zy-commerce-demo.vercel.app |
 | Demo store admin | https://zy-commerce-demo.vercel.app/admin/login |
 
 Hosted on Vercel (team `kzy02`, project `zy-commerce`, functions in Singapore) with a Supabase Postgres (`zy-commerce-db`, Singapore) provisioned through the Vercel Marketplace. Every push to `main` deploys production; the build applies migrations and runs the idempotent seed. Additional tenants on `*.vercel.app` need an alias domain added to the project and listed in `TENANT_HOST_ALIASES`; with a custom domain, wildcard subdomains work automatically.
+
+## Product assistant
+
+Every storefront ships with a chat assistant (bottom-right) that answers customer questions from the **structured specifications** of the products in that store and, when a request is vague, asks one focused follow-up question at a time — the way a good in-store fitter would. It is product-type agnostic: it reads a per-store *catalogue profile* (categories, price ranges, and the spec attributes that actually differ between products) and uses tools to search, fetch and compare products, so it works for paddles today and for coffee machines or furniture tomorrow. Products added later are understood automatically; `src/lib/ai/extract-specs.ts` turns a free-text description into structured specs for products that arrive without any.
+
+- Engine: Claude via the official Anthropic SDK (`src/lib/ai/assistant.ts`), tool loop over `search_products`, `get_product`, `compare_products`, `list_categories`, ending in a structured `respond` call that carries the answer, quick-reply suggestions and the product cards to show.
+- Credentials: set `ANTHROPIC_API_KEY`, or use Vercel AI Gateway (`AI_GATEWAY_API_KEY`, or nothing at all on Vercel where the deployment's OIDC token is used). Without credentials the widget shows an "offline" state and the rest of the store works normally.
+- Guard rails: tenant-scoped queries only, rate-limited per IP and session, every conversation logged under Admin → Conversations.
+- Per-store settings on `Tenant`: `assistantEnabled`, `assistantName`, `assistantGreeting`.
+
+## Importing a catalogue
+
+`scripts/import-shopify-catalog.ts` pulls any Shopify store's public catalogue (names, options, variants, prices, images, and the specification block from each product page) into a seed file the platform loads for a tenant. The demo uses Selkirk Sport:
+
+```bash
+pnpm tsx scripts/import-shopify-catalog.ts --store www.selkirk.com --currency MYR
+```
+
+The seed applies it idempotently (a fingerprint on the tenant skips unchanged files). Descriptions are generated from extracted facts; images link to the source CDN. For a paying client, replace it with their own product data and media.
 
 ## Status
 
 | Phase | Scope | State |
 | --- | --- | --- |
 | 0 | Foundation: scaffold, schema, tenant routing, auth, base layouts, isolation test | **Done** |
+| — | Catalogue importer, product assistant (chatbot), storefront catalogue preview, admin conversations | **Done** |
 | 1 | Product & category management, image upload | Next |
-| 2 | Public storefront: catalog, search, filters, product page | Planned |
+| 2 | Public storefront: cart-ready catalogue, filters (grid, search and product pages already live) | Planned |
 | 3 | Cart & Stripe Checkout, webhook-driven orders | Planned |
 | 4 | Order management, tracking timeline, notification emails | Planned |
 | 5 | Tenant provisioning UI, settings/branding, deployment docs, E2E | Planned |
@@ -137,6 +157,10 @@ src/lib/tenant/         host → slug resolution, request context, branding
 src/lib/auth/           Auth.js config, guards, actions, password, rate limit
 src/lib/orders/         status state machine
 src/lib/money/          integer money helpers
+src/lib/ai/             product assistant: client, catalogue profile, tools, agent loop, spec extraction
+src/lib/catalog/        stock status, spec parsing
+scripts/                dev-up, vercel-build, import-shopify-catalog
+prisma/seed-data/       imported catalogues (selkirk.json)
 src/components/         ui/ (shadcn), auth/, storefront/, admin/, shared/
 tests/unit              pure logic (no DB)   tests/integration  tenant isolation (DB)
 tests/e2e               Playwright
