@@ -41,9 +41,20 @@ export interface AssistantReply {
   usage?: { inputTokens: number; outputTokens: number; cacheReadInputTokens: number };
 }
 
+/**
+ * DeepSeek adds an optional `thinking` toggle beyond the OpenAI-compatible
+ * surface (https://api-docs.deepseek.com/guides/reasoning_model). Measured
+ * against the real API: leaving it on roughly doubled both token usage and
+ * latency for this assistant's short, tool-grounded turns without improving
+ * tool-call correctness, so it is switched off below by default.
+ */
+export type DeepSeekChatCompletionCreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & {
+  thinking?: { type: "enabled" | "disabled" };
+};
+
 /** Minimal surface of the SDK client the loop needs — lets tests pass a fake. */
 export type MessagesClient = {
-  chat: { completions: { create: (params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming) => Promise<OpenAI.Chat.Completions.ChatCompletion> } };
+  chat: { completions: { create: (params: DeepSeekChatCompletionCreateParams) => Promise<OpenAI.Chat.Completions.ChatCompletion> } };
 };
 
 export const MAX_TOOL_ROUNDS = 6;
@@ -104,7 +115,7 @@ export async function runAssistant(opts: RunOptions): Promise<AssistantReply> {
   let usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0 };
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-    const response = await opts.client.chat.completions.create({ model: opts.model, max_tokens: 2048, tools: assistantTools, messages });
+    const response = await opts.client.chat.completions.create({ model: opts.model, max_tokens: 2048, tools: assistantTools, messages, thinking: { type: "disabled" } });
     const u = response.usage;
     usage = {
       inputTokens: usage.inputTokens + (u?.prompt_tokens ?? 0),

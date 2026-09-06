@@ -119,7 +119,7 @@ export function buildCatalogProfile(rows: ProfileProductRow[]): CatalogProfile {
 export function renderCatalogProfile(profile: CatalogProfile, currency: string, format: (minor: number) => string): string {
   const lines: string[] = [`Catalogue: ${profile.productCount} active products in ${profile.categories.length} categories (prices in ${currency}).`];
   for (const c of profile.categories) {
-    lines.push(`- ${c.name} (${c.productCount} products, ${format(c.priceMin)}–${format(c.priceMax)}${c.brands.length ? `, brands: ${c.brands.join(", ")}` : ""})`);
+    lines.push(`- ${c.name} [slug: "${c.slug}"] (${c.productCount} products, ${format(c.priceMin)}–${format(c.priceMax)}${c.brands.length ? `, brands: ${c.brands.join(", ")}` : ""})`);
     for (const f of c.facets) {
       const desc = f.range ? `${f.range.min}–${f.range.max}${f.range.unit ? " " + f.range.unit : ""}` : (f.values ?? []).join(" | ");
       lines.push(`    • ${f.key}: ${desc}`);

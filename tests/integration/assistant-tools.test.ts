@@ -58,4 +58,16 @@ describe("assistant tools are tenant-scoped", () => {
     const ok = JSON.parse(await runAssistantTool("search_products", { query: "", category: "widgets", minPrice: 10, maxPrice: 30, inStockOnly: true }, ctxFor(A.tenant.id)));
     expect(ok.total).toBe(1);
   });
+
+  it("category filter accepts the display name and any casing, not just the exact slug", async () => {
+    // Found live: the catalogue overview shows category *names* ("Widgets"), but a
+    // model without deep reasoning sometimes passes that instead of the slug
+    // ("widgets") — the filter must not silently return zero results for that.
+    const byName = JSON.parse(await runAssistantTool("search_products", { query: "", category: "Widgets", minPrice: null, maxPrice: null, inStockOnly: false }, ctxFor(A.tenant.id)));
+    expect(byName.total).toBe(1);
+    const upperSlug = JSON.parse(await runAssistantTool("search_products", { query: "", category: "WIDGETS", minPrice: null, maxPrice: null, inStockOnly: false }, ctxFor(A.tenant.id)));
+    expect(upperSlug.total).toBe(1);
+    const wrongName = JSON.parse(await runAssistantTool("search_products", { query: "", category: "Gadgets", minPrice: null, maxPrice: null, inStockOnly: false }, ctxFor(A.tenant.id)));
+    expect(wrongName.total).toBe(0);
+  });
 });

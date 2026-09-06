@@ -41,7 +41,7 @@ describe("buildCatalogProfile", () => {
   it("renders a compact text block for the system prompt", () => {
     const profile = buildCatalogProfile([row({ specs: { "Core Thickness": "16mm" } }), row({ price: 30000, specs: { "Core Thickness": "13mm" } })]);
     const text = renderCatalogProfile(profile, "MYR", (m) => `RM${(m / 100).toFixed(0)}`);
-    expect(text).toContain("Paddles (2 products, RM100–RM300");
+    expect(text).toContain('Paddles [slug: "paddles"] (2 products, RM100–RM300');
     expect(text).toContain("Core Thickness: 16mm | 13mm");
   });
 });

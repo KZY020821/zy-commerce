@@ -131,7 +131,10 @@ export async function runAssistantTool(name: string, input: unknown, ctx: ToolCo
       const rows = await ctx.db.product.findMany({
         where: {
           active: true,
-          ...(category ? { category: { slug: category } } : {}),
+          // Accept the slug in any case, and also the category's display name — a
+          // model without deep reasoning will sometimes pass "Paddles" (the name
+          // shown in the catalogue overview) instead of "paddles" (the slug).
+          ...(category ? { category: { OR: [{ slug: { equals: category, mode: "insensitive" } }, { name: { equals: category, mode: "insensitive" } }] } } : {}),
           ...(minPrice !== null || maxPrice !== null ? { price: { ...(minPrice !== null ? { gte: minPrice } : {}), ...(maxPrice !== null ? { lte: maxPrice } : {}) } } : {}),
           ...(inStockOnly ? { stockQuantity: { gt: 0 } } : {}),
         },
