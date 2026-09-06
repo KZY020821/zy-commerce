@@ -4,6 +4,16 @@ Multi-tenant product catalog, storefront and order-management platform. One code
 
 The build specification lives in [`docs/crm-platform-build-spec.md`](docs/crm-platform-build-spec.md). Decisions taken while implementing it are logged in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
+## Live
+
+| What | URL |
+| --- | --- |
+| Platform (landing + super admin) | https://zy-commerce.vercel.app · https://zy-commerce.vercel.app/platform/login |
+| Demo store | https://zy-commerce-demo.vercel.app |
+| Demo store admin | https://zy-commerce-demo.vercel.app/admin/login |
+
+Hosted on Vercel (team `kzy02`, project `zy-commerce`, functions in Singapore) with a Supabase Postgres (`zy-commerce-db`, Singapore) provisioned through the Vercel Marketplace. Every push to `main` deploys production; the build applies migrations and runs the idempotent seed. Additional tenants on `*.vercel.app` need an alias domain added to the project and listed in `TENANT_HOST_ALIASES`; with a custom domain, wildcard subdomains work automatically.
+
 ## Status
 
 | Phase | Scope | State |

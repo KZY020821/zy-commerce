@@ -17,7 +17,7 @@ import { PrismaClient } from "../src/generated/prisma/client";
 import { UserRole } from "../src/generated/prisma/enums";
 import { hashPassword, PASSWORD_MIN_LENGTH } from "../src/lib/auth/password";
 import { buildPoolSettings, resolveDirectDatabaseUrl } from "../src/lib/db/connection";
-import { isValidTenantSlug } from "../src/lib/tenant/resolve";
+import { isValidTenantSlug, platformOrigin, tenantOrigin } from "../src/lib/tenant/resolve";
 
 const connectionString = resolveDirectDatabaseUrl();
 if (!connectionString) throw new Error("No database URL set (DIRECT_URL, POSTGRES_URL_NON_POOLING or DATABASE_URL)");
@@ -27,8 +27,6 @@ const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: pool.con
 /** On Vercel / production we never invent passwords: they'd only live in build logs. */
 const isHosted = Boolean(process.env.VERCEL) || process.env.NODE_ENV === "production";
 
-const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? "localhost:3000";
-const protocol = rootDomain.startsWith("localhost") ? "http" : "https";
 
 function readEnv(name: string, fallback?: string): string {
   const v = process.env[name]?.trim();
@@ -91,7 +89,7 @@ async function seedDemoTenant() {
       taxRateBps: 0,
     },
   });
-  console.log(`✓ Tenant "${tenant.name}" ready at ${protocol}://${tenant.slug}.${rootDomain}`);
+  console.log(`✓ Tenant "${tenant.name}" ready at ${tenantOrigin(tenant.slug)}`);
 
   const email = readEnv("SEED_DEMO_ADMIN_EMAIL", "admin@demo.example.com").toLowerCase();
   const existing = await db.user.findUnique({ where: { tenantId_email: { tenantId: tenant.id, email } } });
@@ -114,9 +112,9 @@ async function main() {
   await seedDemoTenant();
 
   console.log("\nURLs");
-  console.log(`  Platform admin : ${protocol}://${rootDomain}/platform/login`);
-  console.log(`  Demo storefront: ${protocol}://demo.${rootDomain}/`);
-  console.log(`  Demo admin     : ${protocol}://demo.${rootDomain}/admin/login`);
+  console.log(`  Platform admin : ${platformOrigin()}/platform/login`);
+  console.log(`  Demo storefront: ${tenantOrigin("demo")}/`);
+  console.log(`  Demo admin     : ${tenantOrigin("demo")}/admin/login`);
 
   if (notes.length) {
     console.log("\nGenerated credentials (shown once — store them now):");
