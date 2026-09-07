@@ -1,0 +1,46 @@
+{
+  "name": "catalog-concierge",
+  "version": "0.1.0",
+  "description": "A product-aware chat assistant that answers customer questions from a store's own catalogue and specifications. Bring any catalogue, any OpenAI-compatible model.",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./react": "./src/react.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "openai": ">=6",
+    "react": ">=18",
+    "zod": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.1",
+    "@types/react": "^19",
+    "eslint": "^9",
+    "openai": "^7",
+    "react": "^19",
+    "typescript": "^5",
+    "typescript-eslint": "^8.69.0",
+    "vitest": "5",
+    "zod": "^4"
+  }
+}

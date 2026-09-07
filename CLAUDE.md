@@ -1,6 +1,15 @@
 @AGENTS.md
 
-# ZY Commerce — working notes for coding agents
+# Monorepo — working notes for coding agents
+
+Two projects, and the distinction matters:
+
+- `packages/catalog-concierge` is **the product**: a reusable, store-agnostic chat assistant. It must never import from the app, know about Prisma or tenants, or depend on a design system. Its only route to product data is the two-method `CatalogAdapter`. Its tests run with no database and no network.
+- `apps/zy-commerce` is **the showcase**: a multi-tenant commerce platform that consumes the package. The whole integration is `src/lib/ai/prisma-adapter.ts` plus one Server Action.
+
+Adding a capability to the assistant? It belongs in the package, behind the adapter. Adding a store feature? It belongs in the app.
+
+# ZY Commerce — app-specific notes
 
 Read `docs/crm-platform-build-spec.md` (the spec) and `docs/DECISIONS.md` (what has been decided and why) before changing anything structural. `README.md` explains setup and architecture.
 
@@ -12,12 +21,12 @@ Read `docs/crm-platform-build-spec.md` (the spec) and `docs/DECISIONS.md` (what 
 - **Validate all input with Zod** at the Server Action / route handler boundary.
 - **Order status changes** go through `assertTransition()` in `src/lib/orders/status.ts` and always append an `OrderStatusEvent`.
 - **Money is integer minor units**; use `src/lib/money`.
-- **Product assistant** (`src/lib/ai`): tools must use the tenant-scoped client passed in `ToolContext`; the model must finish with the `respond` tool; never call the model from client components. Model client via `getAiClient()` only. Structured product data lives in `Product.specs` / `ProductVariant.attributes` — keep keys Title Case (`normalizeSpecKey`).
+- **Product assistant**: the app supplies a `CatalogAdapter` built on the tenant-scoped Prisma client (`src/lib/ai/prisma-adapter.ts`) and calls `askConcierge`. Never call the model from a client component. Structured product data lives in `Product.specs` / `ProductVariant.attributes` — keep keys Title Case (`normalizeSpecKey`, exported by the package).
 - Work phase by phase (spec §12). Commit at the end of each phase.
 
 ## Commands
 
-`pnpm dev` · `pnpm check` (lint + typecheck + unit + integration) · `pnpm db:migrate` after schema edits · `pnpm db:seed`.
+From the repo root: `pnpm up` (starts the demo platform), `pnpm check` (both projects). Inside `apps/zy-commerce`: `pnpm db:migrate` after schema edits, `pnpm db:seed`. Inside `packages/catalog-concierge`: `pnpm test` needs nothing running.
 
 Integration tests need the Docker database (`pnpm db:up`). Unit tests do not.
 

@@ -59,24 +59,24 @@ node_modules/
 .pnpm-store/
 
 # --- Build output ------------------------------------------------------------
-.next/
-out/
+**/.next/
+**/out/
 build/
 dist/
 .output/
 .cache/
 *.tsbuildinfo
-next-env.d.ts
+**/next-env.d.ts
 
 # --- Generated code ----------------------------------------------------------
-src/generated/
-prisma/generated/
+**/src/generated/
+**/prisma/generated/
 
 # --- Testing -----------------------------------------------------------------
-coverage/
+**/coverage/
 .nyc_output/
-test-results/
-playwright-report/
+**/test-results/
+**/playwright-report/
 playwright/.cache/
 blob-report/
 *.lcov
