@@ -149,6 +149,10 @@ temp/
 *.patch
 .claude/settings.local.json
 
+# --- Local access sheet ------------------------------------------------------
+# Live demo URLs and account passwords, kept on this machine only.
+DEMO-ACCESS.md
+
 # --- Explicit exceptions -----------------------------------------------------
 # .env.test contains only local test-database settings and a dummy secret.
 !.env.test
