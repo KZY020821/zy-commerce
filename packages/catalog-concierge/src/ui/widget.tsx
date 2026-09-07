@@ -202,6 +202,15 @@ export function ConciergeWidget({
               disabled={!configured || pending}
               maxLength={maxLength}
               aria-label="Message"
+              onKeyDown={(e) => {
+                // Send on Enter explicitly rather than relying on the form's
+                // implicit submission, which a host can break by nesting the
+                // widget inside another form.
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send(input);
+                }
+              }}
               className="flex h-9 w-full min-w-0 rounded-md border bg-transparent px-3 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50"
             />
             <button
