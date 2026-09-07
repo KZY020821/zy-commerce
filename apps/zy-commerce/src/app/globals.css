@@ -2,6 +2,11 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/* The chat widget ships from the workspace package, which Tailwind does not
+   discover on its own — without this, classes used only by the widget (its
+   fixed positioning, panel sizing, bubble corners) are never generated. */
+@source "../../../../packages/catalog-concierge/src";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

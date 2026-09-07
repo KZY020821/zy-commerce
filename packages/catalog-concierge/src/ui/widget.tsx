@@ -202,6 +202,7 @@ export function ConciergeWidget({
               disabled={!configured || pending}
               maxLength={maxLength}
               aria-label="Message"
+              data-slot="input"
               onKeyDown={(e) => {
                 // Send on Enter explicitly rather than relying on the form's
                 // implicit submission, which a host can break by nesting the
@@ -211,12 +212,13 @@ export function ConciergeWidget({
                   send(input);
                 }
               }}
-              className="flex h-9 w-full min-w-0 rounded-md border bg-transparent px-3 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50"
+              className="h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 md:text-sm dark:bg-input/30"
             />
             <button
               type="submit"
               disabled={!configured || pending || !input.trim()}
-              className="inline-flex h-9 shrink-0 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-50"
+              data-slot="button"
+              className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-lg border border-transparent bg-primary bg-clip-padding px-2.5 text-[0.8rem] font-medium whitespace-nowrap text-primary-foreground transition-all outline-none select-none hover:bg-primary/80 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:translate-y-px disabled:pointer-events-none disabled:opacity-50"
             >
               Send
             </button>

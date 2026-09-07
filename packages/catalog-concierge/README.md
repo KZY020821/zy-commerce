@@ -81,7 +81,16 @@ import { ConciergeWidget } from "catalog-concierge/react";
 />
 ```
 
-The widget has no design-system dependency. It uses Tailwind utility classes and the CSS variables most Tailwind setups already define, so it inherits your theme.
+The widget has no design-system dependency. It uses Tailwind utility classes and the CSS variables most Tailwind setups already define (`--primary`, `--background`, `--muted`, `--input`, `--ring`), so it inherits your theme automatically.
+
+> **One required step with Tailwind v4.** Tailwind only generates classes it can see, and it does not scan your dependencies. Point it at the package or the widget will render unstyled — most visibly, it will lose its fixed positioning and appear in the top-left corner:
+>
+> ```css
+> /* app.css, next to your @import "tailwindcss" */
+> @source "../node_modules/catalog-concierge/src";
+> ```
+>
+> In a monorepo, use the relative path to the package instead, e.g. `@source "../../../../packages/catalog-concierge/src";`.
 
 ### Specifications are what make it good
 
