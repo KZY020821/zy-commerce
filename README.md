@@ -16,6 +16,8 @@
 
 Both run the **same assistant code** against completely different catalogues, currencies and product types. That is the point: nothing about it is specific to one industry.
 
+> Both stores are **demonstrations**, not shops. Nothing on them is for sale and no order can be placed. They are built from publicly available catalogue data and are not affiliated with, endorsed by, or connected to the brands shown; product names, images and specifications remain the property of their owners. Neither store is search-indexed.
+
 Try asking either store something real, such as *"I'm a beginner, what should I get under 400?"*, then try something unrelated like *"what's the weather?"* — the second is refused in code before any model call, so it costs nothing.
 
 ## Why this exists
@@ -44,3 +46,7 @@ pnpm check         # lint + typecheck + unit + integration across both projects
 | `pnpm --filter zy-commerce test:integration` | Tenant isolation and the catalogue adapter, needs Docker |
 
 Decisions taken along the way are logged in [`docs/DECISIONS.md`](docs/DECISIONS.md); the original build specification for the commerce app is in [`docs/`](docs).
+
+## Licence
+
+Source-available, not open source. Read it, clone it, run it locally to evaluate it — commercial use needs a licence. See [`LICENSE`](LICENSE). If you want the assistant in your own store, that is the thing I do; get in touch.

@@ -3,11 +3,31 @@ import { notFound } from "next/navigation";
 import { SuspendedNotice } from "@/components/tenant/suspended-notice";
 import { tenantCssVars } from "@/lib/tenant/branding";
 import { getCurrentTenant, getCurrentTenantSlug } from "@/lib/tenant/current";
+import { tenantOrigin } from "@/lib/tenant/resolve";
 
 export async function generateMetadata(): Promise<Metadata> {
   const tenant = await getCurrentTenant();
   if (!tenant) return { title: "Store not found" };
-  return { title: { default: tenant.name, template: `%s · ${tenant.name}` } };
+
+  // What someone sees when this link is pasted into Facebook or WhatsApp.
+  // Named as a demo here as well as on the page, because a link preview is
+  // often the only thing that gets read.
+  const description = `A demonstration storefront for the Catalog Concierge assistant. Ask ${tenant.assistantName} about any product and it answers from this catalogue's own specifications.`;
+
+  // The image is named by hand rather than left to the `opengraph-image` file
+  // convention. Left alone, Next builds the URL from the matched route and
+  // emits `/{slug}/opengraph-image` — but the slug is internal, added by
+  // src/proxy.ts, so a crawler fetching that path gets it prefixed a second
+  // time and 404s. `/opengraph-image` is the URL the outside world can reach.
+  const image = { url: "/opengraph-image", width: 1200, height: 630, alt: `${tenant.name} — ask the store anything` };
+
+  return {
+    metadataBase: new URL(tenantOrigin(tenant.slug)),
+    title: { default: tenant.name, template: `%s · ${tenant.name}` },
+    description,
+    openGraph: { type: "website", siteName: tenant.name, title: tenant.name, description, images: [image] },
+    twitter: { card: "summary_large_image", title: tenant.name, description, images: [image] },
+  };
 }
 
 /**
