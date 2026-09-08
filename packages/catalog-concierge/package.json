@@ -2,7 +2,7 @@
   "name": "catalog-concierge",
   "version": "0.1.0",
   "description": "A product-aware chat assistant that answers customer questions from a store's own catalogue and specifications. Bring any catalogue, any OpenAI-compatible model.",
-  "license": "UNLICENSED",
+  "license": "SEE LICENSE IN LICENSE",
   "private": true,
   "type": "module",
   "exports": {
@@ -10,8 +10,10 @@
     "./react": "./src/react.ts"
   },
   "files": [
+    "dist",
     "src",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "lint": "eslint .",
@@ -19,7 +21,9 @@
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc --noEmit"
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && node scripts/add-esm-extensions.mjs",
+    "prepack": "pnpm run build",
+    "clean": "rm -rf dist"
   },
   "peerDependencies": {
     "openai": ">=6",
@@ -42,5 +46,20 @@
     "typescript-eslint": "^8.69.0",
     "vitest": "5",
     "zod": "^4"
-  }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./react": {
+        "types": "./dist/react.d.ts",
+        "default": "./dist/react.js"
+      }
+    },
+    "types": "./dist/index.d.ts",
+    "main": "./dist/index.js"
+  },
+  "sideEffects": false
 }
