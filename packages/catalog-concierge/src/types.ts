@@ -80,6 +80,16 @@ export interface StoreProfile {
 export interface ConversationTurn {
   role: "user" | "assistant";
   content: string;
+  /**
+   * Quick-reply chips this assistant turn offered, if the host stored them.
+   *
+   * Supplying these makes tapping a chip structurally safe: the guard admits a
+   * message that matches one it just offered, so a chip can never be refused
+   * as off-topic. Without them a chip whose wording happens to contain no
+   * catalogue term — "Control and feel" — can be turned away. Never sent to
+   * the model; only the guard reads it.
+   */
+  suggestions?: string[];
 }
 
 /** A product the assistant referred to, ready to render as a card. */

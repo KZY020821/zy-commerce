@@ -6,7 +6,8 @@
 import { describe, expect, it } from "vitest";
 import type { CatalogProfile } from "../src/profile";
 import { buildStarterSuggestions } from "../src/starters";
-import { buildStoreVocabulary, classifyMessage, OFF_TOPIC_REPLY } from "../src/guard";
+import { buildStoreVocabulary, classifyMessage, isQuestion, OFF_TOPIC_REPLY } from "../src/guard";
+import { buildCatalogProfile } from "../src/profile";
 
 const paddleProfile: CatalogProfile = {
   productCount: 3,
@@ -120,10 +121,22 @@ describe("classifyMessage — conversational reality", () => {
   it("allows short follow-ups only once a conversation is under way", () => {
     // These carry no keywords — they refer back to what the assistant just said.
     expect(classifyMessage("the first one", paddleVocab, ongoing).onTopic).toBe(true);
-    expect(classifyMessage("control and feel", paddleVocab, ongoing).onTopic).toBe(true);
     expect(classifyMessage("yes please", paddleVocab, ongoing).onTopic).toBe(true);
     // The same words as an opening message have nothing to refer to.
     expect(classifyMessage("the first one", paddleVocab, fresh).onTopic).toBe(false);
+  });
+
+  it("always admits a chip the assistant itself offered", () => {
+    // "Control and feel" names nothing in the catalogue and points at nothing,
+    // so it only gets through because the assistant put it on screen. Tapping
+    // a chip must never produce the off-topic refusal.
+    const offered = ["Control and feel", "Walking outdoors"];
+    expect(classifyMessage("control and feel", paddleVocab, ongoing).onTopic).toBe(false);
+    expect(classifyMessage("Control and feel", paddleVocab, { ...ongoing, offeredSuggestions: offered }).onTopic).toBe(true);
+    // Matching ignores case and punctuation, since the widget sends chip text verbatim.
+    expect(classifyMessage("control and feel!", paddleVocab, { ...ongoing, offeredSuggestions: offered }).onTopic).toBe(true);
+    // A chip that was not offered gets no special treatment.
+    expect(classifyMessage("walking outdoors", paddleVocab, { ...ongoing, offeredSuggestions: ["Control and feel"] }).onTopic).toBe(false);
   });
 
   it("never lets a long off-topic message in through the follow-up door", () => {
@@ -178,5 +191,76 @@ describe("buildStoreVocabulary", () => {
 describe("OFF_TOPIC_REPLY", () => {
   it("is the exact wording the storefront shows", () => {
     expect(OFF_TOPIC_REPLY).toBe("It seems like the question is not related to the purpose of this chat, try with the sample questions below");
+  });
+});
+
+describe("follow-up rule", () => {
+  // A catalogue of paddles; none of the probe words appear in it.
+  const profile = buildCatalogProfile([
+    { ref: "P1", name: "SLK Nexus Max", price: 22090, category: { slug: "paddles", name: "Paddles" }, specs: { "Core Thickness": "13mm" }, stockQuantity: 5 },
+    { ref: "P2", name: "SLK Atlas", price: 30090, category: { slug: "paddles", name: "Paddles" }, specs: { "Core Thickness": "16mm" }, stockQuantity: 2 },
+  ]);
+  const vocab = buildStoreVocabulary({ storeName: "Selkirk Demo", profile, productNames: ["SLK Nexus Max", "SLK Atlas"] });
+  const verdict = (message: string, opts: { hasHistory: boolean; awaitingAnswer?: boolean }) => classifyMessage(message, vocab, opts);
+
+  it("does not let a short off-topic message through just because a thread exists", () => {
+    // Regression: every short message used to pass once hasHistory was true,
+    // so "give me a haiku" reached the model on the second turn.
+    for (const message of ["explain quantum tunnelling", "who won the world cup", "who is your ceo", "tell me about mars"]) {
+      expect(verdict(message, { hasHistory: true }), message).toMatchObject({ onTopic: false });
+    }
+  });
+
+  it("lets a message that points back at the previous answer through", () => {
+    for (const message of ["the first one", "why?", "yes please", "show me more", "the second please", "what about the other one"]) {
+      expect(verdict(message, { hasHistory: true }), message).toMatchObject({ onTopic: true, reason: "follow-up" });
+    }
+  });
+
+  it("treats a bare question word as referential only in a very short message", () => {
+    expect(verdict("why?", { hasHistory: true })).toMatchObject({ onTopic: true });
+    expect(verdict("who won the world cup", { hasHistory: true })).toMatchObject({ onTopic: false });
+  });
+
+  it("accepts any short answer when the assistant just asked a question", () => {
+    // These are answers to "how often do you play?" / "how wide are your feet?"
+    // and appear nowhere in the catalogue, so only awaitingAnswer saves them.
+    for (const message of ["casually", "wide feet", "twice a week", "just starting out"]) {
+      expect(verdict(message, { hasHistory: true, awaitingAnswer: false }), message).toMatchObject({ onTopic: false });
+      expect(verdict(message, { hasHistory: true, awaitingAnswer: true }), message).toMatchObject({ onTopic: true });
+    }
+  });
+
+  it("keeps the deny list winning even while an answer is expected", () => {
+    expect(verdict("give me a haiku", { hasHistory: true, awaitingAnswer: true })).toMatchObject({ onTopic: false, reason: "blocked-pattern" });
+  });
+
+  it("defaults to the strict reading when a host does not track awaitingAnswer", () => {
+    expect(verdict("casually", { hasHistory: true })).toMatchObject({ onTopic: false });
+  });
+
+  it("still blocks everything short on the very first message", () => {
+    for (const message of ["the first one", "why?", "casually"]) {
+      expect(verdict(message, { hasHistory: false }), message).toMatchObject({ onTopic: false });
+    }
+  });
+
+  it("treats a bare number as an answer, not as arithmetic", () => {
+    // "what's your budget?" → "300"; "what size?" → "10.5"
+    for (const message of ["300", "10.5"]) {
+      expect(verdict(message, { hasHistory: true }), message).toMatchObject({ onTopic: true });
+    }
+    for (const message of ["12 * 7", "5+5="]) {
+      expect(verdict(message, { hasHistory: true }), message).toMatchObject({ onTopic: false, reason: "blocked-pattern" });
+    }
+  });
+});
+
+describe("isQuestion", () => {
+  it("detects the assistant's clarifying question", () => {
+    expect(isQuestion("What size do you wear?")).toBe(true);
+    expect(isQuestion("Here are two good options.")).toBe(false);
+    expect(isQuestion(null)).toBe(false);
+    expect(isQuestion(undefined)).toBe(false);
   });
 });

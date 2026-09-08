@@ -5,7 +5,7 @@
  */
 import type OpenAI from "openai";
 import { describe, expect, it, vi } from "vitest";
-import { buildSystemPrompt, runAssistant, type AssistantStoreContext, type MessagesClient } from "../src/assistant";
+import { buildSystemPrompt, runAssistant, trimHistory, MAX_HISTORY_CHARS, type AssistantStoreContext, type MessagesClient } from "../src/assistant";
 import * as tools from "../src/tools";
 
 const store: AssistantStoreContext = {
@@ -151,5 +151,40 @@ describe("buildSystemPrompt", () => {
     expect(text).toContain("Never invent specifications");
     expect(text).toContain("Core Thickness: 16mm | 13mm");
     expect(text).toContain("respond");
+  });
+});
+
+describe("trimHistory", () => {
+  const t = (content: string, role: "user" | "assistant" = "user") => ({ role, content });
+
+  it("keeps history that fits both budgets untouched", () => {
+    const history = [t("hi"), t("hello", "assistant"), t("show me paddles")];
+    expect(trimHistory(history)).toEqual(history);
+  });
+
+  it("keeps only the most recent turns", () => {
+    const history = Array.from({ length: 30 }, (_, i) => t(`m${i}`));
+    const kept = trimHistory(history);
+    expect(kept).toHaveLength(12);
+    expect(kept.at(-1)).toEqual(t("m29"));
+    expect(kept[0]).toEqual(t("m18"));
+  });
+
+  it("drops the oldest turns once the character budget is exceeded", () => {
+    // Three turns, each half the budget: only the newest two can fit.
+    const big = "x".repeat(MAX_HISTORY_CHARS / 2);
+    const kept = trimHistory([t(big + "oldest"), t(big), t(big)]);
+    expect(kept).toHaveLength(2);
+    expect(kept.some((turn) => turn.content.endsWith("oldest"))).toBe(false);
+  });
+
+  it("bounds one turn's cost even when a host passes an enormous transcript", () => {
+    const history = Array.from({ length: 24 }, () => t("y".repeat(4000)));
+    const chars = trimHistory(history).reduce((n, turn) => n + turn.content.length, 0);
+    expect(chars).toBeLessThanOrEqual(MAX_HISTORY_CHARS);
+  });
+
+  it("returns nothing when even the newest turn overflows the budget", () => {
+    expect(trimHistory([t("z".repeat(MAX_HISTORY_CHARS + 1))])).toEqual([]);
   });
 });

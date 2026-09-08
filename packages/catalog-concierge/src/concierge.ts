@@ -13,7 +13,7 @@
  */
 import { runAssistant, type MessagesClient } from "./assistant";
 import { formatMoney, stockLabel } from "./format";
-import { buildStoreVocabulary, classifyMessage, OFF_TOPIC_REPLY } from "./guard";
+import { buildStoreVocabulary, classifyMessage, isQuestion, OFF_TOPIC_REPLY } from "./guard";
 import { getModelClient } from "./model";
 import { buildCatalogProfile } from "./profile";
 import { buildStarterSuggestions } from "./starters";
@@ -67,7 +67,16 @@ export async function askConcierge(options: ConciergeOptions, input: AskInput): 
       productNames: catalogue.map((p) => p.name),
       brands: catalogue.map((p) => p.brand ?? "").filter(Boolean),
     });
-    const verdict = classifyMessage(input.message, vocabulary, { hasHistory: input.history.length > 0 });
+    // The assistant is built to ask one clarifying question at a time, so when
+    // its last turn ended in a question the customer's short reply is the
+    // answer to it — and that answer is often a word no catalogue contains.
+    const lastAssistantTurn = [...input.history].reverse().find((t) => t.role === "assistant");
+    const verdict = classifyMessage(input.message, vocabulary, {
+      hasHistory: input.history.length > 0,
+      awaitingAnswer: isQuestion(lastAssistantTurn?.content),
+      // A chip the assistant offered is never off-topic, whatever it says.
+      offeredSuggestions: lastAssistantTurn?.suggestions,
+    });
     if (!verdict.onTopic) {
       return { answer: OFF_TOPIC_REPLY, suggestions: starters, products: [], origin: { kind: "blocked", reason: verdict.reason } };
     }

@@ -6,13 +6,19 @@
  * Everything here is host responsibility: which tenant, who is asking, how
  * often they may ask, and keeping a record. The assistant itself lives in the
  * `catalog-concierge` package and is reached through one call.
+ *
+ * Conversation history is read from the database, never from the browser —
+ * see `src/lib/ai/chat-history.ts` for why. The httpOnly session cookie is the
+ * only thing that identifies a thread, and the stored thread is the only
+ * history the model ever sees.
  */
 import { randomBytes } from "node:crypto";
 import OpenAI from "openai";
 import { cookies, headers } from "next/headers";
 import { z } from "zod";
-import { askConcierge, conciergeStarters, isAssistantConfigured, type ConversationTurn, type ProductCard } from "catalog-concierge";
-import type { Prisma } from "@/generated/prisma/client";
+import { askConcierge, isAssistantConfigured, type ConversationTurn, type ProductCard } from "catalog-concierge";
+import type { ChatConversation, Prisma } from "@/generated/prisma/client";
+import { appendTurns, historyForModel, storedTurns, type StoredTurn } from "@/lib/ai/chat-history";
 import { createPrismaCatalogAdapter } from "@/lib/ai/prisma-adapter";
 import { checkRateLimit, clientIpFromHeaders } from "@/lib/auth/rate-limit";
 import { getTenantDb, requireCurrentTenant } from "@/lib/tenant/current";
@@ -22,9 +28,14 @@ const MAX_MESSAGE_CHARS = 1000;
 const RATE_PER_IP = { limit: 60, windowMs: 15 * 60_000 };
 const RATE_PER_SESSION = { limit: 30, windowMs: 15 * 60_000 };
 
+/**
+ * `history` is accepted so the widget's transport contract is unchanged, but it
+ * is deliberately never read. Keeping it in the schema means an oversized
+ * payload is rejected here rather than carried any further in.
+ */
 const inputSchema = z.object({
   message: z.string().trim().min(1).max(MAX_MESSAGE_CHARS),
-  history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(4000) })).max(24),
+  history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(4000) })).max(24).optional(),
 });
 
 export type AssistantActionResult =
@@ -58,28 +69,29 @@ async function logConversation(
   db: Awaited<ReturnType<typeof getTenantDb>>,
   tenantId: string,
   sessionToken: string,
+  existing: ChatConversation | null,
+  previous: StoredTurn[],
   userMessage: string,
   answer: LoggedAnswer,
 ): Promise<void> {
   try {
     const now = new Date().toISOString();
-    const newTurns = [
+    const added: StoredTurn[] = [
       { role: "user", content: userMessage, at: now },
       { role: "assistant", content: answer.answer, at: now, suggestions: answer.suggestions, productSkus: answer.productRefs, toolCalls: answer.toolCalls, ...(answer.blocked ? { blocked: answer.blocked } : {}) },
     ];
-    const existing = await db.chatConversation.findUnique({ where: { tenantId_sessionToken: { tenantId, sessionToken } } });
+    const messages = appendTurns(previous, added) as unknown as Prisma.InputJsonValue;
     if (existing) {
-      const prev = Array.isArray(existing.messages) ? (existing.messages as unknown[]) : [];
-      await db.chatConversation.update({ where: { id: existing.id }, data: { messages: [...prev, ...newTurns] as Prisma.InputJsonValue, messageCount: existing.messageCount + 2, lastMessageAt: new Date() } });
+      await db.chatConversation.update({ where: { id: existing.id }, data: { messages, messageCount: existing.messageCount + 2, lastMessageAt: new Date() } });
     } else {
-      await db.chatConversation.create({ data: { tenantId, sessionToken, messages: newTurns as Prisma.InputJsonValue, messageCount: 2 } });
+      await db.chatConversation.create({ data: { tenantId, sessionToken, messages, messageCount: 2 } });
     }
   } catch (err) {
     console.error("[assistant] failed to log conversation", err);
   }
 }
 
-export async function askAssistantAction(raw: { message: string; history: ConversationTurn[] }): Promise<AssistantActionResult> {
+export async function askAssistantAction(raw: { message: string; history?: ConversationTurn[] }): Promise<AssistantActionResult> {
   const parsed = inputSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: "Please enter a message (up to 1000 characters)." };
 
@@ -97,16 +109,21 @@ export async function askAssistantAction(raw: { message: string; history: Conver
   const db = await getTenantDb();
   const adapter = createPrismaCatalogAdapter(db);
 
+  // The one read that establishes what this thread has actually said. Reused
+  // for logging below, so a turn costs one SELECT rather than two.
+  const existing = await db.chatConversation.findUnique({ where: { tenantId_sessionToken: { tenantId: tenant.id, sessionToken } } });
+  const previous = storedTurns(existing?.messages);
+
   try {
     const reply = await askConcierge(
       {
         store: { storeName: tenant.name, assistantName: tenant.assistantName, currency: tenant.currency, locale: tenant.locale, country: tenant.country },
         adapter,
       },
-      { message: parsed.data.message, history: parsed.data.history },
+      { message: parsed.data.message, history: historyForModel(previous) },
     );
 
-    await logConversation(db, tenant.id, sessionToken, parsed.data.message, {
+    await logConversation(db, tenant.id, sessionToken, existing, previous, parsed.data.message, {
       answer: reply.answer,
       suggestions: reply.suggestions,
       productRefs: reply.products.map((p) => p.ref),
@@ -123,10 +140,4 @@ export async function askAssistantAction(raw: { message: string; history: Conver
     if (err instanceof OpenAI.APIError) return { ok: false, error: "The assistant couldn't reach its model. Please try again shortly." };
     return { ok: false, error: "Something went wrong while answering. Please try again." };
   }
-}
-
-/** Opening quick-reply chips for this store, used by the storefront layout. */
-export async function assistantStartersAction(): Promise<string[]> {
-  const db = await getTenantDb();
-  return conciergeStarters(createPrismaCatalogAdapter(db));
 }

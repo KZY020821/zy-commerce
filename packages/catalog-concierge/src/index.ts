@@ -25,7 +25,7 @@ export type {
 export { buildCatalogProfile, renderCatalogProfile, type CatalogProfile, type CategoryProfile, type SpecFacet } from "./profile";
 
 // The zero-token off-topic guard.
-export { buildStoreVocabulary, classifyMessage, OFF_TOPIC_REPLY, tokenize, type ClassifyOptions, type TopicVerdict, type VocabularySource } from "./guard";
+export { buildStoreVocabulary, classifyMessage, isQuestion, OFF_TOPIC_REPLY, tokenize, type ClassifyOptions, type TopicVerdict, type VocabularySource } from "./guard";
 
 // Quick-reply chips.
 export { buildStarterSuggestions } from "./starters";
@@ -34,7 +34,7 @@ export { buildStarterSuggestions } from "./starters";
 export { assistantTools, runAssistantTool, searchCatalogue, summariseCategories, type SearchFilters, type ToolContext } from "./tools";
 
 // The raw tool loop, for hosts that want to drive it themselves.
-export { buildSystemPrompt, runAssistant, MAX_TOOL_ROUNDS, type AssistantReply, type AssistantStoreContext, type MessagesClient } from "./assistant";
+export { buildSystemPrompt, runAssistant, trimHistory, MAX_HISTORY_CHARS, MAX_TOOL_ROUNDS, type AssistantReply, type AssistantStoreContext, type MessagesClient } from "./assistant";
 
 // Model client resolution (any OpenAI-compatible endpoint).
 export { getModelClient, isAssistantConfigured, resolveModelConfig, DEFAULT_MODEL, type ModelConfig } from "./model";
