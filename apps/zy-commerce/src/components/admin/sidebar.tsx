@@ -17,7 +17,7 @@ const NAV: NavItem[] = [
   { href: "/admin/categories", label: "Categories", phase: 1 },
   { href: "/admin/orders", label: "Orders", phase: 4 },
   { href: "/admin/conversations", label: "Conversations" },
-  { href: "/admin/settings", label: "Settings", phase: 5 },
+  { href: "/admin/settings", label: "Settings" },
 ];
 
 export function AdminSidebar({ tenant, user }: { tenant: Tenant; user: VerifiedUser }) {

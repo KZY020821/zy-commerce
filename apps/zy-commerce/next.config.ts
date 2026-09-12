@@ -56,6 +56,12 @@ const nextConfig: NextConfig = {
   turbopack: { root: path.join(import.meta.dirname, "..", "..") },
   // Tenant storefronts run on *.localhost in development.
   allowedDevOrigins: ["*.localhost"],
+  experimental: {
+    // Logo uploads (admin → Settings) send up to 1 MB plus multipart
+    // overhead, over the 1 MB Server Action default. Every other action
+    // still validates its own input far below this.
+    serverActions: { bodySizeLimit: "2mb" },
+  },
   images: {
     remotePatterns: [
       // Vercel Blob (Phase 1 image uploads)
