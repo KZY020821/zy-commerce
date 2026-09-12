@@ -1,19 +1,78 @@
 name: CI
 
+# The gate in front of production.
+#
+# Branch protection on `main` requires the one check "CI passed", which only
+# succeeds when every job below succeeded on the exact commit being merged.
+# Vercel builds production from `main` alone (previews are switched off), so a
+# change cannot reach the live site without passing all of this first.
+
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
-  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}
+  # A newer push to a pull request supersedes the old run; runs on main always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+  AUTH_TRUST_HOST: "true"
+  NEXT_PUBLIC_ROOT_DOMAIN: localhost:3000
 
 jobs:
-  test:
+  static:
+    name: Lint, types, workflows, package install
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint the workflows themselves
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Assistant package installs from its tarball and imports under plain Node
+        run: pnpm --filter catalog-concierge test:pack
+
+  test-package:
+    name: Assistant package — tests and coverage floor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Tests (logic in Node, widget in jsdom) held to the coverage floor
+        run: pnpm --filter catalog-concierge test:coverage
+
+  test-app:
+    name: App — unit, component and integration tests, coverage floor, migration drift
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     services:
       postgres:
         image: postgres:17-alpine
@@ -26,40 +85,132 @@ jobs:
           --health-cmd "pg_isready -U zy -d zy_commerce_test"
           --health-interval 5s
           --health-timeout 3s
-          --health-retries 10
-
+          --health-retries 20
     env:
       DATABASE_URL: postgresql://zy:zy@localhost:5432/zy_commerce_test?schema=public
-      AUTH_SECRET: ci-only-secret-not-for-production-0000000000
-      AUTH_TRUST_HOST: "true"
-      NEXT_PUBLIC_ROOT_DOMAIN: localhost:3000
-
+      AUTH_SECRET: ci-only-test-secret-not-for-production-000
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: pnpm
-
       - run: pnpm install --frozen-lockfile
 
-      - name: Lint
-        run: pnpm lint
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Unit tests
-        run: pnpm test:unit
-
-      - name: Migrate test database
+      - name: Apply every migration to an empty database
         run: pnpm --filter zy-commerce exec prisma migrate deploy
 
-      - name: Integration tests (tenant isolation)
-        run: pnpm --filter zy-commerce exec vitest run --project integration
+      - name: Migrations and schema agree (no schema change without a migration)
+        run: pnpm --filter zy-commerce db:drift
 
-      - name: Build
+      - name: Unit, component and integration tests held to the coverage floor
+        run: pnpm --filter zy-commerce exec vitest run --coverage
+
+      - name: Keep the coverage report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-app
+          path: apps/zy-commerce/coverage/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  e2e:
+    name: Production build, seed and end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: zy
+          POSTGRES_PASSWORD: zy
+          POSTGRES_DB: zy_commerce_e2e
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U zy -d zy_commerce_e2e"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://zy:zy@localhost:5432/zy_commerce_e2e?schema=public
+      AUTH_SECRET: ci-only-e2e-secret-not-for-production-000
+      SEED_SUPER_ADMIN_EMAIL: owner@example.com
+      # The real Blob store, so the upload test proves the real URL, the site's
+      # own CSP and old-file cleanup. Pull requests from forks do not receive
+      # secrets; the upload tests then skip and say why.
+      BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Throwaway seed passwords, masked in the log
+        run: |
+          for name in SEED_SUPER_ADMIN_PASSWORD SEED_DEMO_ADMIN_PASSWORD SEED_NIKE_ADMIN_PASSWORD; do
+            value="$(openssl rand -hex 16)"
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+
+      - name: Migrate, exactly as the production build does
+        run: pnpm --filter zy-commerce exec prisma migrate deploy
+
+      - name: Seed an empty database, as the first production build did
+        run: pnpm --filter zy-commerce exec prisma db seed
+
+      - name: Seed again — every production deploy re-runs it, so it must change nothing
+        run: |
+          out="$(pnpm --filter zy-commerce exec prisma db seed 2>&1)"
+          echo "$out"
+          if echo "$out" | grep -q "✓ Catalogue:"; then echo "::error::The second seed re-imported a catalogue."; exit 1; fi
+          if echo "$out" | grep -qE "^\+ Created"; then echo "::error::The second seed created accounts again."; exit 1; fi
+          if ! echo "$out" | grep -q "Catalogue unchanged"; then echo "::error::The second seed did not recognise the catalogues it had loaded."; exit 1; fi
+
+      - name: Reuse the Next.js build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: apps/zy-commerce/.next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/zy-commerce/src/**', 'packages/catalog-concierge/src/**') }}
+          restore-keys: |
+            next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Production build
         run: pnpm build
+
+      - name: Install Chromium
+        run: pnpm --filter zy-commerce exec playwright install --with-deps chromium
+
+      - name: End-to-end against the production build
+        run: pnpm --filter zy-commerce test:e2e
+
+      - name: Keep the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report
+          path: apps/zy-commerce/playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  gate:
+    # The only check branch protection requires. A job that failed, was
+    # cancelled or was skipped all count as "not passed".
+    name: CI passed
+    if: always()
+    needs: [static, test-package, test-app, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: A required job did not succeed
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}
+        run: |
+          echo "::error::One or more required jobs did not succeed. See the jobs above."
+          exit 1
+      - name: Every required job succeeded
+        run: echo "Every required job succeeded."

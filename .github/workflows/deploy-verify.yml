@@ -1,0 +1,67 @@
+name: Verify production deploy
+
+# Runs when Vercel reports a production deployment as ready.
+#
+# CI proves a commit is safe before it merges; this proves the live site is
+# actually serving that commit and still works. It first waits until every
+# hostname reports the deployed SHA from /api/health — so it can never pass by
+# testing the previous build while domains move over — then runs read-only
+# browser checks against production. It signs in to nothing, sends no chat
+# messages and uploads nothing.
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Live site serves the deployed commit and works
+    if: github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXPECTED_COMMIT: ${{ github.event.deployment.sha }}
+      LIVE_PLATFORM_URL: https://zy-commerce.vercel.app
+      LIVE_SELKIRK_URL: https://zy-commerce-demo.vercel.app
+      LIVE_NIKE_URL: https://zy-commerce-nike.vercel.app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.deployment.sha }}
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Wait until every hostname serves this commit
+        run: |
+          for url in "$LIVE_PLATFORM_URL" "$LIVE_SELKIRK_URL" "$LIVE_NIKE_URL"; do
+            for attempt in $(seq 1 30); do
+              commit="$(curl -fsS --max-time 10 "$url/api/health" | jq -r '.commit // empty' || true)"
+              if [ "$commit" = "$EXPECTED_COMMIT" ]; then echo "✓ $url serves $commit"; break; fi
+              if [ "$attempt" = 30 ]; then
+                echo "::error::$url still serves '${commit:-nothing}' after 5 minutes; expected $EXPECTED_COMMIT."
+                exit 1
+              fi
+              sleep 10
+            done
+          done
+
+      - name: Install Chromium
+        run: pnpm --filter zy-commerce exec playwright install --with-deps chromium
+
+      - name: Read-only checks against production
+        run: pnpm --filter zy-commerce test:live
+
+      - name: What to do next
+        if: failure()
+        run: |
+          echo "::error title=Production failed its live checks::The live site is serving ${EXPECTED_COMMIT}, which failed the checks above. Roll back in the Vercel dashboard (Deployments → the previous production deployment → Instant Rollback) or with 'vercel rollback <previous deployment URL>', then fix forward through a pull request."
