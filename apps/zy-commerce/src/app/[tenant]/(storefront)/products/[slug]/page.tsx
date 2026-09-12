@@ -22,6 +22,15 @@ async function loadProduct(slug: string) {
   });
 }
 
+/**
+ * An assistant turn is up to 7 model round-trips, each allowed 60s by the SDK
+ * client, so the platform default would cut a slow answer off mid-flight and
+ * bill for the tokens anyway. Server Actions take the limit from the *page*
+ * they are invoked on, so it is declared on each storefront page rather than
+ * in the shared layout.
+ */
+export const maxDuration = 60;
+
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { slug } = await params;
   const product = await loadProduct(slug);
@@ -116,8 +125,11 @@ export default async function ProductPage({ params }: { params: Params }) {
           </div>
         ) : null}
 
-        <Button disabled className="w-full sm:w-auto" title="Cart and checkout arrive in Phase 3">
-          Add to cart — coming in Phase 3
+        {/* Framed as what it is rather than as an unbuilt feature: this is a
+            demonstration catalogue, and selling someone else's products is not
+            the thing being shown. */}
+        <Button disabled className="w-full sm:w-auto" title="This is a demonstration store — nothing here is for sale">
+          Demo store — not for sale
         </Button>
       </div>
     </article>

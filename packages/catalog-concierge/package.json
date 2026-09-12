@@ -2,7 +2,7 @@
   "name": "catalog-concierge",
   "version": "0.1.0",
   "description": "A product-aware chat assistant that answers customer questions from a store's own catalogue and specifications. Bring any catalogue, any OpenAI-compatible model.",
-  "license": "UNLICENSED",
+  "license": "SEE LICENSE IN LICENSE",
   "private": true,
   "type": "module",
   "exports": {
@@ -10,8 +10,10 @@
     "./react": "./src/react.ts"
   },
   "files": [
+    "dist",
     "src",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "lint": "eslint .",
@@ -19,7 +21,11 @@
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc --noEmit"
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && node scripts/add-esm-extensions.mjs",
+    "prepack": "pnpm run build",
+    "clean": "rm -rf dist",
+    "test:coverage": "vitest run --coverage",
+    "test:pack": "node scripts/smoke-pack.mjs"
   },
   "peerDependencies": {
     "openai": ">=6",
@@ -33,14 +39,35 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/react": "16.3.3",
     "@types/node": "^22.20.1",
     "@types/react": "^19",
+    "@types/react-dom": "19.2.7",
+    "@vitest/coverage-v8": "5.0.0",
     "eslint": "^9",
+    "jsdom": "30.0.1",
     "openai": "^7",
     "react": "^19",
+    "react-dom": "19.2.8",
     "typescript": "^5",
     "typescript-eslint": "^8.69.0",
     "vitest": "5",
     "zod": "^4"
-  }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./react": {
+        "types": "./dist/react.d.ts",
+        "default": "./dist/react.js"
+      }
+    },
+    "types": "./dist/index.d.ts",
+    "main": "./dist/index.js"
+  },
+  "sideEffects": false
 }

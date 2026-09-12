@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { htmlToLines, parseLabelLines, parseTechSpecs } from "../src/spec-parse";
+import { decodeEntities, htmlToLines, normalizeSpecKey, normalizeSpecs, parseLabelLines, parseTechSpecs, stripTags } from "../src/spec-parse";
 
 const PAGE = `
 <div class="desc"><p>Marketing copy with a colon: not a spec.</p></div>
@@ -34,5 +34,41 @@ describe("parseLabelLines", () => {
   it("decodes entities and tolerates null html", () => {
     expect(htmlToLines(null)).toEqual([]);
     expect(htmlToLines("<li>Grip: 4.25&#8221; &amp; tacky</li>")).toEqual(['Grip: 4.25" & tacky']);
+  });
+});
+
+describe("decodeEntities and stripTags", () => {
+  it("decodes the entities product pages actually use", () => {
+    expect(decodeEntities("Tom &amp; Jerry &quot;TM&quot; &#39;x&#39; &ndash; &trade; &reg; &#65;")).toBe(`Tom & Jerry "TM" 'x' – ™ ® A`);
+  });
+
+  it("strips tags and collapses whitespace", () => {
+    expect(stripTags("<p> Core <strong>16mm</strong>\n thick </p>")).toBe("Core 16mm thick");
+  });
+
+  it("drops script and style content when splitting HTML into lines", () => {
+    expect(htmlToLines("<p>One</p><script>alert(1)</script><style>p{}</style><ul><li>Two<br>Three</li></ul>")).toEqual(["One", "Two", "Three"]);
+  });
+});
+
+describe("parseTechSpecs — notes and false headings", () => {
+  it("records design notes, and skips a paragraph that reads like a label rather than a heading", () => {
+    const html = `<div id="tech-specs"><p><strong>Max</strong></p><ul><li><strong>Weight:</strong> 8.0 oz</li><li>Designed and quality controlled in the USA</li><li>no label here</li></ul><p>Note: this is not a heading</p></div>`;
+    expect(parseTechSpecs(html)).toEqual([{ heading: "Max", specs: { Weight: "8.0 oz", Design: "Designed and quality controlled in the USA" } }]);
+  });
+});
+
+describe("normalizeSpecKey and normalizeSpecs", () => {
+  it("title-cases words, keeps acronyms and units, and lowers small joining words", () => {
+    expect(normalizeSpecKey("skill level")).toBe("Skill Level");
+    expect(normalizeSpecKey("  weight   in oz ")).toBe("Weight in oz");
+    expect(normalizeSpecKey("USAP approved")).toBe("USAP Approved");
+    expect(normalizeSpecKey("core thickness mm")).toBe("Core Thickness mm");
+    expect(normalizeSpecKey("price per pack")).toBe("Price per Pack");
+    expect(normalizeSpecKey("for beginners")).toBe("For Beginners");
+  });
+
+  it("merges keys that normalise to the same name, keeping the first value", () => {
+    expect(normalizeSpecs({ "skill level": "Beginner", "Skill Level": "Advanced", weight: "8 oz" })).toEqual({ "Skill Level": "Beginner", Weight: "8 oz" });
   });
 });

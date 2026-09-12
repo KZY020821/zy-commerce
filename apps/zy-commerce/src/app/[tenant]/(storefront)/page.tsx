@@ -5,6 +5,15 @@ import { getTenantDb, requireCurrentTenant } from "@/lib/tenant/current";
 
 const PAGE_SIZE = 24;
 
+/**
+ * An assistant turn is up to 7 model round-trips, each allowed 60s by the SDK
+ * client, so the platform default would cut a slow answer off mid-flight and
+ * bill for the tokens anyway. Server Actions take the limit from the *page*
+ * they are invoked on, so it is declared on each storefront page rather than
+ * in the shared layout.
+ */
+export const maxDuration = 60;
+
 export default async function StorefrontHomePage({ searchParams }: { searchParams: Promise<{ category?: string; page?: string; q?: string }> }) {
   const tenant = await requireCurrentTenant();
   const db = await getTenantDb();
@@ -33,6 +42,15 @@ export default async function StorefrontHomePage({ searchParams }: { searchParam
     }),
   ]);
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  /** Keeps category *and* query when paging — dropping `q` silently reset the search. */
+  const pageHref = (n: number) => {
+    const params = new URLSearchParams();
+    if (activeCategory) params.set("category", activeCategory.slug);
+    if (query) params.set("q", query);
+    params.set("page", String(n));
+    return `/?${params.toString()}`;
+  };
 
   return (
     <div className="space-y-8">
@@ -85,9 +103,9 @@ export default async function StorefrontHomePage({ searchParams }: { searchParam
           </div>
           {pageCount > 1 ? (
             <nav aria-label="Pagination" className="flex items-center justify-center gap-3 text-sm">
-              {page > 1 ? <Link href={`/?${activeCategory ? `category=${activeCategory.slug}&` : ""}page=${page - 1}`} className="hover:underline">← Previous</Link> : null}
+              {page > 1 ? <Link href={pageHref(page - 1)} className="hover:underline">← Previous</Link> : null}
               <span className="text-muted-foreground">Page {page} of {pageCount}</span>
-              {page < pageCount ? <Link href={`/?${activeCategory ? `category=${activeCategory.slug}&` : ""}page=${page + 1}`} className="hover:underline">Next →</Link> : null}
+              {page < pageCount ? <Link href={pageHref(page + 1)} className="hover:underline">Next →</Link> : null}
             </nav>
           ) : null}
         </>

@@ -1,0 +1,40 @@
+Copyright (c) 2026 Khor Ze Yi. All rights reserved.
+
+This repository is published so that prospective clients and employers can read
+the source and judge the work. It is not open source.
+
+You may:
+
+  - read, clone and inspect this source;
+  - run it locally, unmodified, to evaluate whether it suits your business.
+
+You may not, without prior written permission from the copyright holder:
+
+  - use this software, in whole or in part, in production or for any commercial
+    purpose;
+  - redistribute it, publish it, or offer it to third parties as a product or
+    as a service;
+  - create or distribute derivative works.
+
+Commercial licensing and integration are available — get in touch.
+
+--------------------------------------------------------------------------------
+THIRD-PARTY AND DEMONSTRATION CONTENT
+
+The demonstration catalogues under apps/zy-commerce/prisma/seed-data/ describe
+products sold by other companies, and reference product photography hosted on
+those companies' own content delivery networks. That material is the property of
+its respective owners and is reproduced here only to demonstrate the assistant
+against a realistic catalogue. It is not covered by the terms above and is not
+licensed by the copyright holder of this repository.
+
+The demonstration storefronts are not affiliated with, endorsed by, or connected
+to any brand shown, sell nothing, and are excluded from search indexing.
+
+--------------------------------------------------------------------------------
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

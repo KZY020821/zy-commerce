@@ -26,7 +26,17 @@ Read `docs/crm-platform-build-spec.md` (the spec) and `docs/DECISIONS.md` (what 
 
 ## Commands
 
-From the repo root: `pnpm up` (starts the demo platform), `pnpm check` (both projects). Inside `apps/zy-commerce`: `pnpm db:migrate` after schema edits, `pnpm db:seed`. Inside `packages/catalog-concierge`: `pnpm test` needs nothing running.
+From the repo root: `pnpm up` (starts the demo platform), `pnpm check` (lint, types, and every test that needs no browser), `pnpm test:coverage` (every suite against the coverage floor). Inside `apps/zy-commerce`: `pnpm db:migrate` after schema edits, `pnpm db:seed`, `pnpm test:e2e` (Chromium), `pnpm db:drift`. Inside `packages/catalog-concierge`: `pnpm test` needs nothing running.
+
+## Shipping changes
+
+- **Every change goes through a pull request.** `main` is protected: the check "CI passed" must be green on the commit being merged, and direct pushes are refused for everyone. Vercel builds production from `main` only.
+- **New code comes with tests, in the right suite:** `tests/unit` (Node; mock `next-auth`, `next/headers` and the database as the existing files do), `tests/component` (React in jsdom), `tests/integration` (real Postgres — the setup refuses any database whose name does not end in `_test`), `tests/e2e` (Chromium against a production build), `tests/live` (read-only checks of the live site; never write to production).
+- **Coverage floors are a ratchet.** They live in each `vitest.config.mts`; raise them when coverage rises, never lower them to get a change through.
+- **A schema change ships with its migration in the same pull request.** CI fails on drift between `schema.prisma` and `prisma/migrations`.
+- **The seed must stay idempotent.** Every production deploy re-runs it, and CI runs it twice and fails if the second run imports or creates anything.
+- **The slug prefix `e2e-` is reserved** for the end-to-end suite's throwaway stores, which it deletes along with their Blob files. It refuses to run against a database that is not local.
+- The health check's `SELECT 1` lives in `src/lib/db/health.ts`, so `unscopedDb` still never leaves `src/lib/db`.
 
 Integration tests need the Docker database (`pnpm db:up`). Unit tests do not.
 

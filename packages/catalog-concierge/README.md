@@ -68,6 +68,20 @@ const reply = await askConcierge(
 // → { answer, suggestions, products, origin, usage }
 ```
 
+> **`history` must come from your own storage, never from the browser.** Whatever
+> endpoint you put in front of `askConcierge` is public, so a transcript the
+> client sends is attacker-controlled. Forged `assistant` turns land in the
+> model's context as if the assistant had written them, and the guard's
+> "short follow-up" rule below assumes a conversation is genuinely in progress —
+> claim a history and off-topic questions start reaching the model. Key the
+> thread by an httpOnly cookie or a signed session id, store the turns
+> server-side, and replay those. The reference integration does this in
+> [`apps/zy-commerce/src/lib/ai/chat-history.ts`](../../apps/zy-commerce/src/lib/ai/chat-history.ts).
+>
+> As a backstop the loop trims history to the most recent 12 turns and
+> `MAX_HISTORY_CHARS` (12,000) characters, so one turn's cost is bounded even
+> if a host gets this wrong.
+
 Then render the widget and hand it a transport, usually a Next.js Server Action:
 
 ```tsx
@@ -136,6 +150,8 @@ A message passes if it:
 A deny list of clear non-commerce intents wins outright, so *"write me a poem about shoes"* is refused despite naming a product. Prompt-injection attempts such as *"ignore previous instructions"* are caught here too.
 
 It is deliberately biased towards letting borderline questions through: a wrongly blocked customer sees a broken assistant, while a wrongly admitted one costs a fraction of a cent and the system prompt still holds the model to the catalogue.
+
+**Two limits worth knowing before you promise a client "zero cost on off-topic".** The follow-up rule means the guard is strictest on the first message and looser once a thread is running — which is only safe if `history` is server-side, as above. And the vocabulary is built from your own product names, so a catalogue full of common words donates them to the allow-list: Nike's basketball range puts *book*, *cut*, *air* and *court* in scope, and *"how do I book a flight"* reads as on-topic. Both are deliberate trades in favour of not blocking real customers.
 
 ```ts
 classifyMessage("do you have 16mm paddles?", vocab, { hasHistory: false });

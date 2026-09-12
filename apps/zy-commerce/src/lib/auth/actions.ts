@@ -51,6 +51,12 @@ export async function storeAdminLoginAction(_prev: LoginState, formData: FormDat
   return login(UserRole.STORE_ADMIN, "/admin", formData);
 }
 
+/**
+ * Only a same-site path is accepted. "//host" also starts with a slash but a
+ * browser reads it as another site, and a bound Server Action argument comes
+ * back from the client, so it is never trusted as-is.
+ */
 export async function signOutAction(redirectTo: string): Promise<void> {
-  await signOut({ redirectTo: redirectTo.startsWith("/") ? redirectTo : "/" });
+  const sameSite = redirectTo.startsWith("/") && !redirectTo.startsWith("//") && !redirectTo.startsWith("/\\");
+  await signOut({ redirectTo: sameSite ? redirectTo : "/" });
 }

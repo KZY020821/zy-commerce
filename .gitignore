@@ -154,6 +154,10 @@ temp/
 DEMO-ACCESS.md
 
 # --- Explicit exceptions -----------------------------------------------------
-# .env.test contains only local test-database settings and a dummy secret.
+# Last match wins in gitignore, so every negation must come AFTER the rule it
+# undoes. A stray `.env*` used to sit below these and silently disabled both.
+# .env.example documents the variables; .env.test holds only local test-database
+# settings and a dummy secret. Neither has ever contained a real credential.
+!.env.example
+!*.env.example
 !.env.test
-.env*

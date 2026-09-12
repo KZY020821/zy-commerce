@@ -53,6 +53,30 @@ export type MessagesClient = {
 
 export const MAX_TOOL_ROUNDS = 6;
 const MAX_HISTORY_TURNS = 12;
+/**
+ * Ceiling on the characters of prior conversation replayed to the model.
+ *
+ * The host owns history and is expected to supply a trustworthy transcript
+ * (see the README), but history is the one input that scales with what a
+ * customer typed, and it is resent on every tool round. Capping it here bounds
+ * the cost of a single turn no matter what a host passes in. Oldest turns are
+ * dropped first, so the most recent context always survives.
+ */
+export const MAX_HISTORY_CHARS = 12_000;
+
+/** Most recent turns that fit inside both the turn and character budgets. */
+export function trimHistory(history: { role: "user" | "assistant"; content: string }[]): { role: "user" | "assistant"; content: string }[] {
+  const recent = history.slice(-MAX_HISTORY_TURNS);
+  const kept: typeof recent = [];
+  let chars = 0;
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const turn = recent[i]!;
+    chars += turn.content.length;
+    if (chars > MAX_HISTORY_CHARS) break;
+    kept.unshift(turn);
+  }
+  return kept;
+}
 
 export function buildSystemPrompt(ctx: AssistantStoreContext): string {
   const money = (minor: number) => formatMoney(minor, ctx.currency, ctx.locale);
@@ -103,7 +127,7 @@ function safeParseArgs(raw: string): Record<string, unknown> {
 
 export async function runAssistant(opts: RunOptions): Promise<AssistantReply> {
   const system = buildSystemPrompt(opts.store);
-  const history = opts.history.slice(-MAX_HISTORY_TURNS).map<OpenAI.Chat.Completions.ChatCompletionMessageParam>((t) => ({ role: t.role, content: t.content }));
+  const history = trimHistory(opts.history).map<OpenAI.Chat.Completions.ChatCompletionMessageParam>((t) => ({ role: t.role, content: t.content }));
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [{ role: "system", content: system }, ...history, { role: "user", content: opts.userMessage }];
   const toolCalls: AssistantReply["toolCalls"] = [];
   let usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0 };

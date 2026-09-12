@@ -111,7 +111,9 @@ export function ConciergeWidget({
             <span aria-hidden className="inline-block size-6 rounded-full bg-primary" />
           </header>
 
-          <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
+          {/* Replies arrive without the reader moving focus, so they have to be
+              announced. `polite` waits for a pause rather than interrupting. */}
+          <div ref={listRef} role="log" aria-live="polite" aria-atomic="false" aria-busy={pending} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
             {!configured ? (
               <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
                 The assistant is not connected to a model yet. Once a model key is configured it will answer questions from the product catalogue.
@@ -173,7 +175,7 @@ export function ConciergeWidget({
 
             {pending ? (
               <div className="flex justify-start">
-                <div className="rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-muted-foreground">Checking the catalogue…</div>
+                <div role="status" className="rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-muted-foreground">Checking the catalogue…</div>
               </div>
             ) : null}
           </div>
