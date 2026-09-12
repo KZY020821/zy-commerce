@@ -84,7 +84,11 @@ export function parseLabelLines(lines: string[], marketingLabels: RegExp = /^$/)
 
 const SMALL_WORDS = new Set(["a", "an", "and", "as", "at", "by", "for", "in", "of", "on", "or", "per", "the", "to", "vs", "with"]);
 
-/** "Skill level" / "skill  LEVEL" → "Skill Level"; all-caps tokens (USAP) and units (mm, oz) are kept. */
+/**
+ * "skill  level" → "Skill Level". All-caps tokens are kept as written (so an
+ * acronym like USAP survives — and so does "LEVEL"), units stay lower case
+ * (mm, oz), and small joining words after the first are lower-cased.
+ */
 export function normalizeSpecKey(key: string): string {
   return key
     .trim()

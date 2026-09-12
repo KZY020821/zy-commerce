@@ -51,8 +51,12 @@ export class OrderStatusTransitionError extends Error {
   }
 }
 
+/**
+ * Own keys only: `in` would also accept names every object inherits, so
+ * "constructor" or "toString" from a form field would pass as a status.
+ */
 export function isOrderStatus(value: unknown): value is OrderStatus {
-  return typeof value === "string" && value in ALLOWED_TRANSITIONS;
+  return typeof value === "string" && Object.hasOwn(ALLOWED_TRANSITIONS, value);
 }
 
 export function canTransition(from: OrderStatus, to: OrderStatus): boolean {

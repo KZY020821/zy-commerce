@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   assertTransition,
   canTransition,
+  isOrderStatus,
+  isPaidStatus,
   isTerminal,
   nextStatuses,
   ORDER_STATUS_FLOW,
+  ORDER_STATUS_LABELS,
   OrderStatus,
   OrderStatusTransitionError,
 } from "@/lib/orders/status";
@@ -73,5 +76,24 @@ describe("order status state machine", () => {
       expect((e as OrderStatusTransitionError).from).toBe(S.SHIPPED);
       expect((e as OrderStatusTransitionError).to).toBe(S.PAID);
     }
+  });
+});
+
+describe("status helpers", () => {
+  it("recognises only real statuses — not names inherited from Object.prototype", () => {
+    expect(isOrderStatus("PAID")).toBe(true);
+    expect(isOrderStatus("paid")).toBe(false);
+    expect(isOrderStatus(42)).toBe(false);
+    for (const inherited of ["constructor", "toString", "hasOwnProperty", "__proto__"]) expect(isOrderStatus(inherited), inherited).toBe(false);
+  });
+
+  it("knows which statuses are terminal, paid, and where each can go next", () => {
+    expect(isTerminal(OrderStatus.CANCELLED)).toBe(true);
+    expect(isTerminal(OrderStatus.DELIVERED)).toBe(false);
+    expect(isPaidStatus(OrderStatus.PENDING_PAYMENT)).toBe(false);
+    expect(isPaidStatus(OrderStatus.CANCELLED)).toBe(false);
+    expect(isPaidStatus(OrderStatus.REFUNDED)).toBe(true);
+    expect(nextStatuses(OrderStatus.SHIPPED)).toEqual([OrderStatus.DELIVERED, OrderStatus.REFUNDED]);
+    expect(Object.keys(ORDER_STATUS_LABELS).sort()).toEqual(Object.values(OrderStatus).sort());
   });
 });
