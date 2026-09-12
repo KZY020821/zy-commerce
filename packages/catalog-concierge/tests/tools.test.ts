@@ -117,3 +117,13 @@ describe("runAssistantTool", () => {
     expect(res.error).toContain("drop_database");
   });
 });
+
+describe("runAssistantTool — protocol edges", () => {
+  it("acknowledges `respond` without doing anything, since the loop handles it", async () => {
+    expect(JSON.parse(await runAssistantTool("respond", { answer: "x" }, ctx))).toEqual({ ok: true });
+  });
+
+  it("reports an unknown tool as an error the model can read, instead of throwing", async () => {
+    expect(JSON.parse(await runAssistantTool("delete_everything", {}, ctx))).toEqual({ error: "Unknown tool delete_everything" });
+  });
+});

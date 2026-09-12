@@ -50,3 +50,38 @@ describe("buildCatalogProfile", () => {
     expect(text).toContain("Core Thickness: 16mm | 13mm");
   });
 });
+
+describe("buildCatalogProfile — awkward values", () => {
+  it("shortens long values so the system prompt stays compact", () => {
+    const long = "Carbon fibre face with a textured finish for spin";
+    const other = "Fibreglass face with a smooth finish for control";
+    const face = buildCatalogProfile([row({ specs: { Face: long } }), row({ specs: { Face: other } })]).categories[0]!.facets.find((f) => f.key === "Face")!;
+    expect(face.values).toEqual([`${long.slice(0, 37)}…`, `${other.slice(0, 37)}…`]);
+  });
+
+  it("does not mistake a sentence that starts with a number for a measurement", () => {
+    const values = ["16 layers of carbon fibre for stiffness", "12 layers of glass fibre for touch", "8 layers of Kevlar for power and pop", "4 layers of hybrid weave"];
+    const facet = buildCatalogProfile(values.map((v) => row({ specs: { Layers: v } }))).categories[0]!.facets.find((f) => f.key === "Layers")!;
+    expect(facet.range).toBeUndefined();
+    expect(facet.values).toHaveLength(4);
+  });
+
+  it("ignores empty and missing values", () => {
+    const profile = buildCatalogProfile([row({ specs: { Core: null, Blank: "   " } }), row({ specs: { Core: null, Blank: "" } })]);
+    expect(profile.categories[0]!.facets).toEqual([]);
+  });
+});
+
+describe("renderCatalogProfile — formatting", () => {
+  it("renders ranges with and without a unit, and omits brands when there are none", () => {
+    const text = renderCatalogProfile(
+      { productCount: 2, categories: [{ slug: "balls", name: "Balls", productCount: 2, priceMin: 1000, priceMax: 2000, brands: [], facets: [{ key: "Pack Size", coverage: 2, range: { min: 3, max: 12, unit: "" } }, { key: "Diameter", coverage: 2, range: { min: 72, max: 74, unit: "mm" } }] }] },
+      "USD",
+      (minor) => `$${minor / 100}`,
+    );
+    expect(text).toContain(`- Balls [slug: "balls"] (2 products, $10–$20)`);
+    expect(text).not.toContain("brands:");
+    expect(text).toContain("    • Pack Size: 3–12");
+    expect(text).toContain("    • Diameter: 72–74 mm");
+  });
+});

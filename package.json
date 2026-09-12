@@ -2,7 +2,9 @@
   "name": "zy-monorepo",
   "private": true,
   "packageManager": "pnpm@9.13.2",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22 <25"
+  },
   "scripts": {
     "build": "pnpm --filter catalog-concierge build && pnpm --filter zy-commerce build",
     "dev": "pnpm --filter zy-commerce dev",
@@ -13,7 +15,8 @@
     "test": "pnpm -r test",
     "test:unit": "pnpm -r test:unit",
     "test:integration": "pnpm --filter zy-commerce test:integration",
-    "check": "pnpm lint && pnpm typecheck && pnpm test:unit && pnpm test:integration"
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm test:integration",
+    "test:coverage": "pnpm -r test:coverage"
   },
   "devDependencies": {
     "typescript": "^5"
