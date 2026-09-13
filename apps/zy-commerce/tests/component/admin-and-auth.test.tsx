@@ -42,6 +42,24 @@ describe("AdminSidebar", () => {
     expect(screen.getByRole("link", { name: "View storefront ↗" }).getAttribute("href")).toBe("/");
     expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
   });
+
+  it("shows the placeholder square until the store uploads a logo", () => {
+    const { container } = render(<AdminSidebar tenant={tenant} user={user} />);
+    const brand = container.querySelector("aside > div")!;
+    expect(brand.querySelector("img")).toBeNull();
+    expect(brand.querySelector("span[aria-hidden]")).not.toBeNull();
+  });
+
+  it("shows the store's logo in place of the square once one is uploaded", () => {
+    const logoUrl = "https://store.public.blob.vercel-storage.com/tenants/t-acme/logo-abc.png";
+    const { container } = render(<AdminSidebar tenant={{ ...tenant, logoUrl }} user={user} />);
+    const brand = container.querySelector("aside > div")!;
+    expect(brand.querySelector("img")?.getAttribute("src")).toBe(logoUrl);
+    // Decorative: the store name is printed right beside it.
+    expect(brand.querySelector("img")?.getAttribute("alt")).toBe("");
+    expect(brand.querySelector("span[aria-hidden]")).toBeNull();
+    expect(brand.textContent).toContain("Acme Store");
+  });
 });
 
 describe("LoginForm", () => {

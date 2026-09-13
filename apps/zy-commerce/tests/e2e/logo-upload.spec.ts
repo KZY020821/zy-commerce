@@ -1,8 +1,8 @@
 /**
  * The whole logo flow in a real browser against a production build: sign in,
  * upload to the real Blob store, see it on the storefront under the site's
- * own security headers, replace it, and remove it — checking storage directly
- * that replaced and removed files are really gone.
+ * own security headers and in the admin menu, replace it, and remove it —
+ * checking storage directly that replaced and removed files are really gone.
  *
  * Runs against the throwaway store from global-setup.ts. Skipped when no Blob
  * credentials are present, which is the case for pull requests from forks:
@@ -25,6 +25,8 @@ test.describe("store logo", () => {
   let page: Page;
   const uploaded: string[] = [];
   const logoUrlPattern = () => new RegExp(`^https://[a-z0-9]+\\.public\\.blob\\.vercel-storage\\.com/tenants/${process.env.E2E_TENANT_ID}/logo-[A-Za-z0-9]+\\.png$`);
+  // The logo at the top of the admin menu, beside the store name.
+  const sidebarLogo = () => page.locator("aside img");
 
   async function upload(file: { name: string; buffer: Buffer }) {
     await page.goto(`${store()}/admin/settings`);
@@ -47,6 +49,7 @@ test.describe("store logo", () => {
 
   test("an uploaded logo is stored and shown on the storefront", async () => {
     await upload({ name: "logo.png", buffer: solidPng(512, 128, [34, 197, 94]) });
+    await expect(sidebarLogo()).toHaveCount(0);
     await expect(page.getByRole("img", { name: "Preview of logo.png" })).toBeVisible();
     await page.getByRole("button", { name: "Save logo" }).click();
     await expect(page.getByText("Logo saved. It's now showing on your storefront.")).toBeVisible();
@@ -54,6 +57,9 @@ test.describe("store logo", () => {
     const src = await page.getByRole("img", { name: "E2E Store logo" }).getAttribute("src");
     expect(src).toMatch(logoUrlPattern());
     uploaded.push(src!);
+    // The admin menu swaps its square for the logo straight away: saving
+    // refreshes the page, so no reload is needed.
+    await expect(sidebarLogo()).toHaveAttribute("src", src!);
 
     const storefront = await context.newPage();
     await storefront.goto(`${store()}/`);
@@ -73,6 +79,7 @@ test.describe("store logo", () => {
     expect(src).toMatch(logoUrlPattern());
     expect(src).not.toBe(uploaded[0]);
     uploaded.push(src!);
+    await expect(sidebarLogo()).toHaveAttribute("src", src!);
     await expect(head(uploaded[0]!)).rejects.toBeInstanceOf(BlobNotFoundError);
   });
 
@@ -89,6 +96,7 @@ test.describe("store logo", () => {
     await page.getByRole("button", { name: "Save logo" }).click();
     await expect(page.getByText("Upload a PNG, JPEG or WebP image.")).toBeVisible();
     await expect(page.getByRole("img", { name: "E2E Store logo" })).toHaveAttribute("src", uploaded[1]!);
+    await expect(sidebarLogo()).toHaveAttribute("src", uploaded[1]!);
   });
 
   test("an admin's session does not reach another store's settings", async () => {
@@ -101,6 +109,7 @@ test.describe("store logo", () => {
     await page.getByRole("button", { name: "Remove logo" }).click();
     await expect(page.getByText("Logo removed. Your storefront shows the coloured square again.")).toBeVisible();
     await expect(page.getByText("No logo yet")).toBeVisible();
+    await expect(sidebarLogo()).toHaveCount(0);
     await expect(head(uploaded[1]!)).rejects.toBeInstanceOf(BlobNotFoundError);
 
     const storefront = await context.newPage();

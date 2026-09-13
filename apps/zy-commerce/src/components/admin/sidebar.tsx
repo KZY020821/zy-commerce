@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import type { Tenant } from "@/generated/prisma/client";
 import { SignOutButton } from "@/components/auth/sign-out-button";
@@ -24,7 +25,14 @@ export function AdminSidebar({ tenant, user }: { tenant: Tenant; user: VerifiedU
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
       <div className="flex items-center gap-2 border-b px-4 py-4">
-        <span aria-hidden className="inline-block size-6 rounded bg-primary" />
+        {/* The storefront header's logo, at the same height. Decorative here:
+            the store name is printed right beside it. Capped in width so a
+            long logo cannot squeeze the name out. */}
+        {tenant.logoUrl ? (
+          <Image src={tenant.logoUrl} alt="" width={96} height={32} unoptimized className="h-8 w-auto max-w-24 shrink-0 object-contain" />
+        ) : (
+          <span aria-hidden className="inline-block size-6 rounded bg-primary" />
+        )}
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold">{tenant.name}</p>
           <p className="truncate text-xs text-muted-foreground">Store admin</p>
