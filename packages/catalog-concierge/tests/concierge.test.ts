@@ -51,6 +51,25 @@ function respondWith(payload: { answer: string; suggestions?: string[]; productR
   } as unknown as OpenAI.Chat.Completions.ChatCompletion;
 }
 
+/** A completion whose only tool call opens the catalogue, as the model does before answering. */
+function lookupWith(name: "get_product" | "compare_products", input: Record<string, unknown>): OpenAI.Chat.Completions.ChatCompletion {
+  return {
+    id: "cmpl",
+    object: "chat.completion",
+    created: 0,
+    model: "deepseek-test",
+    choices: [
+      {
+        index: 0,
+        logprobs: null,
+        finish_reason: "tool_calls",
+        message: { role: "assistant", content: null, refusal: null, tool_calls: [{ id: "call_lookup", type: "function", function: { name, arguments: JSON.stringify(input) } }] },
+      },
+    ],
+    usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, prompt_tokens_details: { cached_tokens: 0 } },
+  } as unknown as OpenAI.Chat.Completions.ChatCompletion;
+}
+
 /** Records every request; fails loudly if the model is asked more than scripted. */
 function scriptedModel(responses: OpenAI.Chat.Completions.ChatCompletion[]) {
   const calls: unknown[] = [];
@@ -165,5 +184,140 @@ describe("askConcierge — follow-ups use the conversation the host stored", () 
     ];
     expect(await ask("Quiet mornings", offered)).toEqual({ blocked: false, modelCalls: 1 });
     expect(await ask("Quiet mornings", notOffered)).toEqual({ blocked: true, modelCalls: 0 });
+  });
+});
+
+describe("askConcierge — a product it talks about always gets a card", () => {
+  it("cards the product it just opened, even when it lists none", async () => {
+    // The bug this guards: the model describes a product it fetched, tells the
+    // customer to tap the card, and leaves productRefs empty.
+    const { model } = scriptedModel([
+      lookupWith("get_product", { ref: "PAD-1" }),
+      respondWith({ answer: "Here's the Atlas Control Paddle. Tap the card below to open it.", productRefs: [] }),
+    ]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "take me to the atlas paddle", history: [] });
+
+    expect(reply.products.map((p) => p.ref)).toEqual(["PAD-1"]);
+    expect(reply.products[0]!.url).toBe("/products/atlas");
+  });
+
+  it("cards every product it compared when it lists none", async () => {
+    const { model } = scriptedModel([
+      lookupWith("compare_products", { refs: ["PAD-1", "PAD-2"] }),
+      respondWith({ answer: "They differ in core thickness.", productRefs: [] }),
+    ]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "compare the top two", history: [] });
+
+    expect(reply.products.map((p) => p.ref)).toEqual(["PAD-1", "PAD-2"]);
+  });
+
+  it("accepts a slug or a product name where a reference was expected", async () => {
+    const { model } = scriptedModel([respondWith({ answer: "Both work.", productRefs: ["atlas", "Vanguard Power Paddle"] })]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "which paddle should I get?", history: [] });
+
+    expect(reply.products.map((p) => p.ref)).toEqual(["PAD-1", "PAD-2"]);
+  });
+
+  it("recovers a reference quoted in the answer when nothing was listed or opened", async () => {
+    const { model } = scriptedModel([respondWith({ answer: "PAD-2 is the powerful one.", productRefs: [] })]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "which paddle has the most power?", history: [] });
+
+    expect(reply.products.map((p) => p.ref)).toEqual(["PAD-2"]);
+  });
+
+  it("cards a product the answer only names, when it opened nothing", async () => {
+    // The commonest shape once a conversation is running: the model answers
+    // from what it said earlier, calls no tool, and lists no reference.
+    const { model } = scriptedModel([respondWith({ answer: "Here's the Atlas Control Paddle — tap the card to open its page.", productRefs: [] })]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "take me to the atlas paddle", history: [] });
+
+    expect(reply.products.map((p) => p.ref)).toEqual(["PAD-1"]);
+  });
+
+  it("cards both products when the answer names two, in the order named", async () => {
+    const { model } = scriptedModel([respondWith({ answer: "The Vanguard Power Paddle hits harder; the Atlas Control Paddle is easier to place.", productRefs: [] })]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "power or control?", history: [] });
+
+    expect(reply.products.map((p) => p.ref)).toEqual(["PAD-2", "PAD-1"]);
+  });
+
+  it("attaches nothing when the name could be either product", async () => {
+    const twins: CatalogueProduct[] = [
+      { ref: "V-16", name: "Vanguard Control 16", category: { slug: "paddles", name: "Paddles" }, price: 30000, stockQuantity: 5 },
+      { ref: "V-13", name: "Vanguard Control 13", category: { slug: "paddles", name: "Paddles" }, price: 32000, stockQuantity: 5 },
+    ];
+    const adapter: CatalogAdapter = {
+      listCatalogue: async () => twins,
+      getProduct: async (ref: string) => twins.find((p) => p.ref.toLowerCase() === ref.toLowerCase()) ?? null,
+    };
+    const { model } = scriptedModel([respondWith({ answer: "The Vanguard Control is a good pick either way.", productRefs: [] })]);
+
+    const reply = await askConcierge({ store, adapter, model }, { message: "which vanguard?", history: [] });
+
+    expect(reply.products).toEqual([]);
+  });
+
+  it("treats a short, word-like slug as prose, not a citation", async () => {
+    // PAD-1 lives at /products/atlas; the word "atlas" in a sentence is not a citation.
+    const { model } = scriptedModel([respondWith({ answer: "We keep an atlas of paddle shapes on the blog.", productRefs: [] })]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "do you have paddle shape guides?", history: [] });
+
+    expect(reply.products).toEqual([]);
+  });
+
+  it("invents no cards from ordinary prose", async () => {
+    const { model } = scriptedModel([respondWith({ answer: "We sell paddles and balls — what are you after?", productRefs: [] })]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "what do you sell?", history: [] });
+
+    expect(reply.products).toEqual([]);
+  });
+
+  it("keeps the model's own list, and does not add what it opened along the way", async () => {
+    const { model } = scriptedModel([
+      lookupWith("get_product", { ref: "PAD-2" }),
+      respondWith({ answer: "The Atlas is the better beginner pick.", productRefs: ["PAD-1"] }),
+    ]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "atlas or vanguard for a beginner?", history: [] });
+
+    expect(reply.products.map((p) => p.ref)).toEqual(["PAD-1"]);
+  });
+
+  it("never repeats a product, whichever spelling the model used", async () => {
+    const { model } = scriptedModel([respondWith({ answer: "This one.", productRefs: ["PAD-1", "pad-1", "atlas"] })]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "show me the atlas", history: [] });
+
+    expect(reply.products.map((p) => p.ref)).toEqual(["PAD-1"]);
+  });
+
+  it("shows at most four cards when it recovers them itself", async () => {
+    const many: CatalogueProduct[] = Array.from({ length: 5 }, (_, i) => ({
+      ref: `P-${i + 1}`,
+      name: `Paddle ${i + 1}`,
+      category: { slug: "paddles", name: "Paddles" },
+      price: 10000 + i,
+      stockQuantity: 4,
+    }));
+    const adapter: CatalogAdapter = {
+      listCatalogue: async () => many,
+      getProduct: async (ref: string) => many.find((p) => p.ref.toLowerCase() === ref.toLowerCase()) ?? null,
+    };
+    const { model } = scriptedModel([
+      lookupWith("compare_products", { refs: ["P-1", "P-2", "P-3", "P-4"] }),
+      respondWith({ answer: "P-5 is cheaper than the four above.", productRefs: [] }),
+    ]);
+
+    const reply = await askConcierge({ store, adapter, model }, { message: "compare the paddles", history: [] });
+
+    expect(reply.products.map((p) => p.ref)).toEqual(["P-1", "P-2", "P-3", "P-4"]);
   });
 });

@@ -120,7 +120,7 @@ For catalogues where specs live in prose, `extractSpecs()` turns a description i
 2. **Map** it: categories, price ranges, brands, and the specification fields that vary. This goes into the system prompt.
 3. **Guard**: decide in code whether the message is about this store. If not, return the fixed reply. No model call.
 4. **Loop**: the model calls tools until it has what it needs, up to six rounds.
-5. **Resolve**: the references it quoted become product cards.
+5. **Resolve**: the references it quoted become product cards. When it quotes none — which happens whenever it writes "tap the card below" and forgets the list — the products it opened this turn are used instead, then any reference quoted in the answer, then a product the answer names unambiguously. A reference, a slug or the product's name all resolve.
 
 ### The tools it gets
 
