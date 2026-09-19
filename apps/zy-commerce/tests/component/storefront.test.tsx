@@ -5,9 +5,10 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/app/[tenant]/(storefront)/assistant/actions", () => ({ askAssistantAction: vi.fn() }));
+vi.mock("@/app/[tenant]/(storefront)/assistant/actions", () => ({ askAssistantAction: vi.fn(), startNewChatAction: vi.fn() }));
 
 import type { Tenant } from "@/generated/prisma/client";
+import { askAssistantAction, startNewChatAction } from "@/app/[tenant]/(storefront)/assistant/actions";
 import { StorefrontAssistant } from "@/components/storefront/assistant";
 import { StorefrontFooter } from "@/components/storefront/footer";
 import { StorefrontHeader } from "@/components/storefront/header";
@@ -98,5 +99,20 @@ describe("StorefrontAssistant", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
     expect(screen.getByText("Hi from Acme")).toBeTruthy();
     expect(screen.getByText(/not connected to a model yet/)).toBeTruthy();
+  });
+
+  it("wires New chat to the server, so the assistant forgets the old thread", async () => {
+    vi.mocked(askAssistantAction).mockResolvedValue({ ok: true, answer: "Try the Atlas.", suggestions: [], products: [] });
+    vi.mocked(startNewChatAction).mockResolvedValue(undefined);
+    render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Try the Atlas.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
+
+    await screen.findByRole("button", { name: "Help me choose" });
+    expect(startNewChatAction).toHaveBeenCalledTimes(1);
   });
 });

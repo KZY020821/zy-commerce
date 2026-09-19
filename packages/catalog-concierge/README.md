@@ -92,8 +92,13 @@ import { ConciergeWidget } from "catalog-concierge/react";
   greeting="Hi! Tell me how you run and I'll find the right shoe."
   starterSuggestions={["Help me choose", "Show me trail shoes"]}
   onSend={askAssistantAction}
+  onNewChat={startNewChatAction}
 />
 ```
+
+`onNewChat` runs when the customer taps **New chat**, before the screen clears. If you keep history on the server, as above, use it to start a fresh thread there — the reference app issues a new session cookie. Without it the widget only clears what it shows.
+
+The message box grows with the text to about six lines, then scrolls inside itself, so a long question is always readable at once. Enter sends and Shift+Enter starts a new line; an input method's Enter (choosing a Chinese or Japanese word) never sends.
 
 The widget has no design-system dependency. It uses Tailwind utility classes and the CSS variables most Tailwind setups already define (`--primary`, `--background`, `--muted`, `--input`, `--ring`), so it inherits your theme automatically.
 

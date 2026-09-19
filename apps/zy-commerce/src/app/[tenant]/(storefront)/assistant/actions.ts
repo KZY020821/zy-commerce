@@ -42,13 +42,29 @@ export type AssistantActionResult =
   | { ok: true; answer: string; suggestions: string[]; products: ProductCard[] }
   | { ok: false; error: string };
 
+/** The anonymous thread's cookie: 30 days, never readable by page scripts. */
+function sessionCookieOptions() {
+  return { httpOnly: true, sameSite: "lax" as const, secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 * 24 * 30 };
+}
+
 async function getOrCreateSessionToken(): Promise<string> {
   const jar = await cookies();
   const existing = jar.get(SESSION_COOKIE)?.value;
   if (existing && /^[a-f0-9]{32}$/.test(existing)) return existing;
   const token = randomBytes(16).toString("hex");
-  jar.set(SESSION_COOKIE, token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 * 24 * 30 });
+  jar.set(SESSION_COOKIE, token, sessionCookieOptions());
   return token;
+}
+
+/**
+ * "New chat" in the widget. The thread lives on the server, keyed by the
+ * session cookie, so clearing the screen alone would leave the assistant
+ * remembering the old conversation. A fresh token starts a new thread; the
+ * old one stays in the store's conversation log.
+ */
+export async function startNewChatAction(): Promise<void> {
+  const jar = await cookies();
+  jar.set(SESSION_COOKIE, randomBytes(16).toString("hex"), sessionCookieOptions());
 }
 
 interface LoggedAnswer {
