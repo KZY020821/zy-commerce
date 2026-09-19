@@ -17,7 +17,7 @@ vi.mock("catalog-concierge", async (importOriginal) => ({
 
 import { askConcierge, isAssistantConfigured, type ConciergeReply } from "catalog-concierge";
 import { cookies, headers } from "next/headers";
-import { askAssistantAction } from "@/app/[tenant]/(storefront)/assistant/actions";
+import { askAssistantAction, startNewChatAction } from "@/app/[tenant]/(storefront)/assistant/actions";
 import { rateLimitStore } from "@/lib/auth/rate-limit";
 import { getTenantDb, requireCurrentTenant } from "@/lib/tenant/current";
 
@@ -192,4 +192,27 @@ describe("askAssistantAction — model failures, in words a customer can act on"
       expect(db.chatConversation.create).not.toHaveBeenCalled();
     });
   }
+});
+
+describe("startNewChatAction — New chat starts a new thread on the server", () => {
+  it("issues a fresh httpOnly session cookie", async () => {
+    await startNewChatAction();
+
+    expect(jar.set).toHaveBeenCalledTimes(1);
+    const [name, token, options] = jar.set.mock.calls[0] as unknown as [string, string, Record<string, unknown>];
+    expect(name).toBe("zy_chat_session");
+    expect(token).toMatch(/^[a-f0-9]{32}$/);
+    expect(token).not.toBe(SESSION);
+    expect(options).toMatchObject({ httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 30 });
+  });
+
+  it("means the next message reads and writes a different thread", async () => {
+    await startNewChatAction();
+    const fresh = (jar.set.mock.calls[0] as unknown as [string, string])[1];
+
+    await askAssistantAction({ message: "which paddle for a beginner?" });
+
+    expect(db.chatConversation.findUnique).toHaveBeenCalledWith({ where: { tenantId_sessionToken: { tenantId: "t-acme", sessionToken: fresh } } });
+    expect(db.chatConversation.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ sessionToken: fresh }) }));
+  });
 });
