@@ -55,6 +55,24 @@ describe("toRestoredMessages", () => {
   });
 });
 
+describe("toRestoredMessages — the reasons on the cards", () => {
+  it("puts each reason back on the card it belonged to, even when one product has gone", () => {
+    const turns: StoredTurn[] = [
+      { role: "assistant", content: "Two options.", productSkus: ["GONE", "PAD-1"], productNotes: ["cheapest", "16mm core, easiest on the arm"] },
+    ];
+
+    expect(toRestoredMessages(turns, new Map([["PAD-1", card("PAD-1")]]))).toEqual([
+      { role: "assistant", content: "Two options.", products: [{ ...card("PAD-1"), note: "16mm core, easiest on the arm" }] },
+    ]);
+  });
+
+  it("leaves the card alone when that turn recorded no reasons", () => {
+    const turns: StoredTurn[] = [{ role: "assistant", content: "One option.", productSkus: ["PAD-1"] }];
+
+    expect(toRestoredMessages(turns, new Map([["PAD-1", card("PAD-1")]]))[0]!.products![0]).toEqual(card("PAD-1"));
+  });
+});
+
 describe("productCardsBySku", () => {
   const row = (over: Partial<{ sku: string; name: string; slug: string; price: number; hasVariants: boolean; stockQuantity: number | null; lowStockThreshold: number | null; images: { url: string }[] }> = {}) => ({
     sku: "PAD-1",

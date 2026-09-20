@@ -124,7 +124,9 @@ export async function* askConciergeStream(options: ConciergeOptions, input: AskI
   // sometimes naming one from earlier in the conversation without opening
   // anything. Both left the customer with no card to tap.
   const lookup = buildLookup(catalogue);
-  const listed = toCards(reply.productRefs, lookup, options.store);
+  // Reasons belong to the list the model gave. A recovered card is one it
+  // forgot to list at all, so there is nothing it said about why.
+  const listed = toCards(reply.productRefs, lookup, options.store, reply.productNotes);
   const products = listed.length > 0 ? listed : toCards(recoverRefs(reply, catalogue), lookup, options.store);
 
   return {
@@ -247,14 +249,15 @@ function refsNamed(answer: string, catalogue: ConciergeCatalogue): string[] {
 }
 
 /** Resolves the refs the model used into renderable cards, in its order. */
-function toCards(refs: string[], lookup: Map<string, ConciergeCatalogue[number]>, store: StoreProfile): ProductCard[] {
+function toCards(refs: string[], lookup: Map<string, ConciergeCatalogue[number]>, store: StoreProfile, notes: string[] = []): ProductCard[] {
   const cards: ProductCard[] = [];
   const seen = new Set<string>();
-  for (const ref of refs) {
+  for (const [i, ref] of refs.entries()) {
     const p = lookup.get(ref.trim().toLowerCase());
     if (!p || seen.has(p.ref)) continue;
     seen.add(p.ref);
-    cards.push(toProductCard(p, store));
+    const note = notes[i];
+    cards.push({ ...toProductCard(p, store), ...(note ? { note } : {}) });
     if (cards.length === MAX_CARDS) break;
   }
   return cards;

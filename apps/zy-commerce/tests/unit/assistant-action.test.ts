@@ -189,6 +189,25 @@ describe("askAssistantAction — what is recorded", () => {
     expect(updated.data.messages).toHaveLength(4);
   });
 
+  it("records why each product was shown, so a restored conversation still says it", async () => {
+    vi.mocked(askConcierge).mockResolvedValueOnce({
+      ...modelReply,
+      products: [{ ...modelReply.products[0]!, note: "16mm core, easiest on the arm" }],
+    });
+
+    await askAssistantAction({ message: "which paddle for tennis elbow?" });
+
+    const created = db.chatConversation.create.mock.calls[0]![0] as { data: { messages: Array<Record<string, unknown>> } };
+    expect(created.data.messages[1]).toMatchObject({ productSkus: ["PAD-1"], productNotes: ["16mm core, easiest on the arm"] });
+  });
+
+  it("writes no reasons when the assistant gave none", async () => {
+    await askAssistantAction({ message: "show me paddles" });
+
+    const created = db.chatConversation.create.mock.calls[0]![0] as { data: { messages: Array<Record<string, unknown>> } };
+    expect(created.data.messages[1]).not.toHaveProperty("productNotes");
+  });
+
   it("marks a refused message as blocked, so it is never replayed to the model", async () => {
     vi.mocked(askConcierge).mockResolvedValueOnce({ answer: "It seems like the question is not related…", suggestions: ["Help me choose"], products: [], origin: { kind: "blocked", reason: "no-signal" } });
     await askAssistantAction({ message: "give me a haiku" });

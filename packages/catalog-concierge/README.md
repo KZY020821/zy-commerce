@@ -225,9 +225,11 @@ For catalogues where specs live in prose, `extractSpecs()` turns a description i
 | `search_products` | Keywords plus category, price and stock filters. Matches **specification values**, so "16mm" or "Air Zoom" finds the right products |
 | `get_product` | Full detail: every spec, every variant with its own price and stock |
 | `compare_products` | A specification matrix across two to four products |
-| `respond` | Ends the turn with a structured reply: text, quick-reply chips, product references |
+| `respond` | Ends the turn with a structured reply: text, quick-reply chips, product references and a reason for each |
 
 Search runs over the in-memory snapshot rather than issuing more queries, so ranking is identical to what the store map saw. A name hit outranks a brand hit, which outranks a specification hit, which outranks a description hit.
+
+Each product reference comes with a short reason — "16mm core, easiest on the arm" — which the widget prints under the product's name, so a card says why it is there instead of only what it costs. The reasons are used only when there is exactly one per product: a list that does not line up would put one product's reason under another's name, so a mismatch shows nothing at all.
 
 ---
 

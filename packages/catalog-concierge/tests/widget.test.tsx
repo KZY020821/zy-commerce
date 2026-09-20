@@ -225,7 +225,7 @@ describe("ConciergeWidget — the conversation", () => {
 
     resolveReply(replied);
     expect(await screen.findByText("Here are two options.")).toBeTruthy();
-    expect(screen.queryByRole("status")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
     expect(messageBox().disabled).toBe(false);
     expect(document.activeElement).toBe(messageBox());
   });
@@ -747,5 +747,23 @@ describe("ConciergeWidget — saying what it is doing", () => {
     openWidget();
     await sendAndWait("which paddle?");
     expect(onSend).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ConciergeWidget — why this product", () => {
+  it("shows the assistant's reason under the product's name", async () => {
+    const products: ProductCard[] = [
+      { ...card, ref: "PAD-1", name: "Atlas", note: "16mm core, easiest on the arm" },
+      { ...card, ref: "PAD-2", name: "Vanguard" },
+    ];
+    renderWidget({ onSend: vi.fn<ConciergeWidgetProps["onSend"]>(async () => ({ ok: true, answer: "Two options.", suggestions: [], products })) });
+    openWidget();
+    type("which paddle for tennis elbow?");
+    fireEvent.click(sendButton());
+    await screen.findByText("Two options.");
+
+    expect(screen.getByText("16mm core, easiest on the arm")).toBeTruthy();
+    // The one without a reason says nothing rather than something vague.
+    expect(screen.getByRole("link", { name: /Vanguard/ }).textContent).not.toContain("16mm");
   });
 });

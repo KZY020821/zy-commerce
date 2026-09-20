@@ -30,6 +30,8 @@ export interface StoredTurn {
   at?: string;
   suggestions?: string[];
   productSkus?: string[];
+  /** One reason per `productSkus` entry, in the same order, when there were any. */
+  productNotes?: string[];
   toolCalls?: string[];
   /** Set when the guard turned the message away, so no model call was made. */
   blocked?: string;

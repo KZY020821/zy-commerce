@@ -213,3 +213,13 @@ describe("buildSystemPrompt — the shop's own facts", () => {
     expect(prompt).not.toContain("x".repeat(MAX_POLICY_CHARS + 1));
   });
 });
+
+describe("respond — the reason behind each card", () => {
+  it("asks for one reason per product, in the same order", () => {
+    const respond = tools.assistantTools.find((t) => t.function.name === "respond")!;
+    const properties = (respond.function.parameters as { properties: Record<string, { description?: string }>; required: string[] });
+
+    expect(properties.required).toContain("productNotes");
+    expect(properties.properties.productNotes!.description).toMatch(/same order and the same length/);
+  });
+});

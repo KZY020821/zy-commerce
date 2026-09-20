@@ -150,6 +150,8 @@ export async function recordTurn(turn: PreparedTurn, reply: ConciergeReply): Pro
         at: now,
         suggestions: reply.suggestions,
         productSkus: reply.products.map((p) => p.ref),
+        // Kept so a restored conversation still says why each card is there.
+        ...(reply.products.some((p) => p.note) ? { productNotes: reply.products.map((p) => p.note ?? "") } : {}),
         toolCalls: reply.origin.kind === "model" ? reply.origin.toolCalls : [],
         ...(reply.origin.kind === "blocked" ? { blocked: reply.origin.reason } : {}),
       },

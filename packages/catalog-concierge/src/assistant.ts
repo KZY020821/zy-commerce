@@ -33,6 +33,14 @@ export interface AssistantReply {
   answer: string;
   suggestions: string[];
   productRefs: string[];
+  /**
+   * A reason per entry of `productRefs`, in the same order.
+   *
+   * Empty unless the model returned exactly one for each product: a list that
+   * does not line up would put one product's reason on another's card, which
+   * is worse than saying nothing.
+   */
+  productNotes: string[];
   /** Tool calls made this turn (for logging / admin analytics). */
   toolCalls: { name: string; input: unknown }[];
   usage?: { inputTokens: number; outputTokens: number; cacheReadInputTokens: number };
@@ -106,12 +114,12 @@ export function buildSystemPrompt(ctx: AssistantStoreContext, viewing?: ViewingC
     "- Only discuss this store's catalogue. For unrelated topics, steer back politely.",
     `- Prices are already formatted in ${ctx.currency}; quote them as given. Mention stock status when it matters (sold out, low stock).`,
     "- Be concise: normally under 120 words. Use short paragraphs or up to 4 bullet points. No headings, no markdown tables, no emojis.",
-    "- Every product you name belongs in `productRefs` when you call `respond`, so the customer gets a tappable card for it. Never paste a URL or a path: the card is the link.",
+    "- Every product you name belongs in `productRefs` when you call `respond`, so the customer gets a tappable card for it, with a matching `productNotes` entry saying in a few words why it is there. Never paste a URL or a path: the card is the link.",
     "",
     "How to help (a fit-assistant flow that works for any product type):",
     "1. If the customer's need is clear enough to act on, look products up and answer or recommend directly.",
     "2. If it is under-specified (e.g. \"which paddle should I get?\", \"I need shoes\"), ask ONE focused clarifying question at a time. Choose it from the attributes that actually differentiate that category below (skill level, size, thickness, weight, use case, budget…). Offer the plausible answers as the `suggestions` so the customer can tap instead of type. Ask at most 3 clarifying questions in a row before recommending.",
-    "3. When recommending, propose 2–3 products maximum, each with a one-line reason tied to a concrete spec or fit, and list their SKUs in `productRefs`.",
+    "3. When recommending, propose 2–3 products maximum, each with a one-line reason tied to a concrete spec or fit, and list their SKUs in `productRefs` with that reason, shortened, in `productNotes`.",
     "4. When comparing, use compare_products and highlight the 2–4 specs that differ most.",
     "5. Always end your turn by calling `respond` exactly once. `suggestions` must be 2–4 short options (≤ 6 words each): answers to your question, or natural next steps such as \"Compare the top two\" or \"Show something cheaper\".",
     "",
@@ -140,6 +148,22 @@ interface RunOptions {
 
 function isFunctionCall(call: OpenAI.Chat.Completions.ChatCompletionMessageToolCall): call is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall {
   return call.type === "function";
+}
+
+/** How long a reason may be before it stops fitting on a card. */
+const MAX_NOTE_CHARS = 60;
+
+/**
+ * The reasons, only if there is exactly one per product.
+ *
+ * Models drop an entry as happily as they add one, and a shifted list puts
+ * one product's reason under another's name — a quiet, confident lie. When
+ * the lists disagree, the cards simply say nothing.
+ */
+function alignedNotes(value: unknown, products: number): string[] {
+  if (products === 0 || !Array.isArray(value) || value.length !== products) return [];
+  const notes = value.map((note) => String(note).trim().replace(/\s+/g, " ").slice(0, MAX_NOTE_CHARS));
+  return notes.every(Boolean) ? notes : [];
 }
 
 function safeParseArgs(raw: string): Record<string, unknown> {
@@ -178,20 +202,22 @@ export async function* runAssistantEvents(opts: RunOptions): AsyncGenerator<Assi
 
     const choice = response.choices[0];
     const message = choice?.message;
-    if (!message) return { answer: "Sorry, I didn't get a response. Please try again.", suggestions: [], productRefs: [], toolCalls, usage };
+    if (!message) return { answer: "Sorry, I didn't get a response. Please try again.", suggestions: [], productRefs: [], productNotes: [], toolCalls, usage };
 
     if (message.refusal || choice.finish_reason === "content_filter") {
-      return { answer: "Sorry, I can't help with that request. Is there a product I can help you find?", suggestions: ["Show me popular products", "Help me choose"], productRefs: [], toolCalls, usage };
+      return { answer: "Sorry, I can't help with that request. Is there a product I can help you find?", suggestions: ["Show me popular products", "Help me choose"], productRefs: [], productNotes: [], toolCalls, usage };
     }
 
     const calls = (message.tool_calls ?? []).filter(isFunctionCall);
     const respond = calls.find((c) => c.function.name === "respond");
     if (respond) {
-      const input = safeParseArgs(respond.function.arguments) as { answer?: unknown; suggestions?: unknown; productRefs?: unknown };
+      const input = safeParseArgs(respond.function.arguments) as { answer?: unknown; suggestions?: unknown; productRefs?: unknown; productNotes?: unknown };
+      const productRefs = Array.isArray(input.productRefs) ? input.productRefs.map(String).filter(Boolean).slice(0, 4) : [];
       return {
         answer: typeof input.answer === "string" && input.answer.trim() ? input.answer.trim() : "I'm not sure how to answer that. Could you tell me a bit more about what you're looking for?",
         suggestions: Array.isArray(input.suggestions) ? input.suggestions.map(String).filter(Boolean).slice(0, 4) : [],
-        productRefs: Array.isArray(input.productRefs) ? input.productRefs.map(String).filter(Boolean).slice(0, 4) : [],
+        productRefs,
+        productNotes: alignedNotes(input.productNotes, productRefs.length),
         toolCalls,
         usage,
       };
@@ -200,7 +226,7 @@ export async function* runAssistantEvents(opts: RunOptions): AsyncGenerator<Assi
     if (calls.length === 0 || choice.finish_reason === "stop" || choice.finish_reason === "length") {
       // The model answered in plain text instead of calling respond — accept it.
       const text = (message.content ?? "").trim();
-      return { answer: text || "Could you tell me a bit more about what you're looking for?", suggestions: [], productRefs: [], toolCalls, usage };
+      return { answer: text || "Could you tell me a bit more about what you're looking for?", suggestions: [], productRefs: [], productNotes: [], toolCalls, usage };
     }
 
     messages.push({ role: "assistant", content: message.content, tool_calls: message.tool_calls });
@@ -219,7 +245,7 @@ export async function* runAssistantEvents(opts: RunOptions): AsyncGenerator<Assi
     }
   }
 
-  return { answer: "I looked into that but couldn't put together a confident answer. Could you rephrase or narrow it down?", suggestions: ["Show me popular products", "Start over"], productRefs: [], toolCalls, usage };
+  return { answer: "I looked into that but couldn't put together a confident answer. Could you rephrase or narrow it down?", suggestions: ["Show me popular products", "Start over"], productRefs: [], productNotes: [], toolCalls, usage };
 }
 
 /** The loop with nobody watching: runs it to the end and hands back the reply. */

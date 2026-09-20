@@ -28,7 +28,7 @@ function makeAdapter(): CatalogAdapter & { listCatalogue: ReturnType<typeof vi.f
 const store = { storeName: "Selkirk Demo", assistantName: "Fit Assistant", currency: "MYR", locale: "en-MY" };
 
 /** A completion whose only tool call is `respond` with this payload. */
-function respondWith(payload: { answer: string; suggestions?: string[]; productRefs?: string[] }): OpenAI.Chat.Completions.ChatCompletion {
+function respondWith(payload: { answer: string; suggestions?: string[]; productRefs?: string[]; productNotes?: string[] }): OpenAI.Chat.Completions.ChatCompletion {
   return {
     id: "cmpl",
     object: "chat.completion",
@@ -43,7 +43,7 @@ function respondWith(payload: { answer: string; suggestions?: string[]; productR
           role: "assistant",
           content: null,
           refusal: null,
-          tool_calls: [{ id: "call_1", type: "function", function: { name: "respond", arguments: JSON.stringify({ suggestions: [], productRefs: [], ...payload }) } }],
+          tool_calls: [{ id: "call_1", type: "function", function: { name: "respond", arguments: JSON.stringify({ suggestions: [], productRefs: [], productNotes: [], ...payload }) } }],
         },
       },
     ],
@@ -416,5 +416,39 @@ describe("askConciergeStream — saying what it is doing while it does it", () =
     const plain = await askConcierge({ store, adapter: makeAdapter(), model: withoutStream.model }, { message: "tell me about the atlas", history: [] });
 
     expect(streamed.reply).toEqual(plain);
+  });
+});
+
+describe("askConcierge — why each product is on the card", () => {
+  it("puts the model's reason on the card it belongs to", async () => {
+    const { model } = scriptedModel([respondWith({ answer: "Two options.", productRefs: ["PAD-1", "PAD-2"], productNotes: ["16mm core, easiest on the arm", "13mm, for power"] })]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "which paddle for tennis elbow?", history: [] });
+
+    expect(reply.products.map((p) => ({ ref: p.ref, note: p.note }))).toEqual([
+      { ref: "PAD-1", note: "16mm core, easiest on the arm" },
+      { ref: "PAD-2", note: "13mm, for power" },
+    ]);
+  });
+
+  // A shifted list would put one product's reason under another's name.
+  it("says nothing at all when the reasons do not line up with the products", async () => {
+    const { model } = scriptedModel([respondWith({ answer: "Two options.", productRefs: ["PAD-1", "PAD-2"], productNotes: ["only one reason"] })]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "which paddle?", history: [] });
+
+    expect(reply.products.every((p) => p.note === undefined)).toBe(true);
+  });
+
+  it("leaves a recovered card without a reason, because the model gave none", async () => {
+    const { model } = scriptedModel([
+      lookupWith("get_product", { ref: "PAD-1" }),
+      respondWith({ answer: "Tap the card below for the Atlas.", productRefs: [], productNotes: [] }),
+    ]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "tell me about the atlas", history: [] });
+
+    expect(reply.products.map((p) => p.ref)).toEqual(["PAD-1"]);
+    expect(reply.products[0]!.note).toBeUndefined();
   });
 });

@@ -67,7 +67,15 @@ export async function productCardsBySku(db: TenantDb, store: { currency: string;
 /** The stored turns as the widget renders them, oldest first. */
 export function toRestoredMessages(turns: StoredTurn[], cards: Map<string, ProductCard>): RestoredMessage[] {
   return turns.map((turn) => {
-    const products = (turn.productSkus ?? []).map((sku) => cards.get(sku)).filter((card): card is ProductCard => Boolean(card));
+    const products = (turn.productSkus ?? [])
+      // Zipped before filtering, so a product that has since gone does not
+      // shift everyone else's reason onto the wrong card.
+      .map((sku, i) => {
+        const card = cards.get(sku);
+        const note = turn.productNotes?.[i];
+        return card && note ? { ...card, note } : card;
+      })
+      .filter((card): card is ProductCard => Boolean(card));
     return {
       role: turn.role,
       content: turn.content,

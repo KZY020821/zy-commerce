@@ -113,6 +113,12 @@ export interface ProductCard {
   /** Pre-formatted for display, e.g. "RM 352.90". */
   priceLabel: string;
   stockLabel: StockLabel;
+  /**
+   * Why the assistant put this product here, in its own words — "16mm core,
+   * easiest on the arm". Present only when it listed the product itself and
+   * gave a reason for it.
+   */
+  note?: string;
 }
 
 /**

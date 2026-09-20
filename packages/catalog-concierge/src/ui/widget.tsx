@@ -589,6 +589,8 @@ export function ConciergeWidget({
                             </span>
                             <span className="min-w-0 flex-1 space-y-1">
                               <span className="line-clamp-2 block text-sm leading-snug font-medium">{p.name}</span>
+                              {/* Why this one, in the assistant's own words. */}
+                              {p.note ? <span className="line-clamp-1 block text-xs text-muted-foreground">{p.note}</span> : null}
                               <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                                 <span className="text-sm font-semibold">
                                   {p.priceFrom ? <span className="font-normal text-muted-foreground">{text.priceFrom}</span> : null}

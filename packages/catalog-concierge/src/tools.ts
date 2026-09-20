@@ -85,15 +85,22 @@ export const assistantTools: OpenAI.Chat.Completions.ChatCompletionFunctionTool[
     function: {
       name: "respond",
       description:
-        "Deliver your reply to the customer. ALWAYS finish your turn by calling this tool exactly once. `answer` is the message shown to the customer (plain text, short paragraphs, may use simple bullet points). `suggestions` are 2–4 short things the customer might tap next — either answers to the question you just asked, or natural next steps. `productRefs` lists the references of products you mentioned so they can be shown as cards, most relevant first (empty if none).",
+        "Deliver your reply to the customer. ALWAYS finish your turn by calling this tool exactly once. `answer` is the message shown to the customer (plain text, short paragraphs, may use simple bullet points). `suggestions` are 2–4 short things the customer might tap next — either answers to the question you just asked, or natural next steps. `productRefs` lists the references of products you mentioned so they can be shown as cards, most relevant first (empty if none). `productNotes` says why each of them is there.",
       parameters: {
         type: "object",
         properties: {
           answer: { type: "string" },
           suggestions: { type: "array", items: { type: "string" }, maxItems: 4 },
           productRefs: { type: "array", items: { type: "string" }, maxItems: 4 },
+          productNotes: {
+            type: "array",
+            items: { type: "string" },
+            maxItems: 4,
+            description:
+              "One reason per product in productRefs, in the same order and the same length: the specification or fit that made you pick it, at most eight words, no price and no product name (the card shows both). E.g. \"16mm core, easiest on the arm\". Use an empty array if you have no specific reason.",
+          },
         },
-        required: ["answer", "suggestions", "productRefs"],
+        required: ["answer", "suggestions", "productRefs", "productNotes"],
         additionalProperties: false,
       },
     },
