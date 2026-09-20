@@ -84,13 +84,22 @@ export interface ViewingContext {
   name: string;
 }
 
+/**
+ * Ceiling on the store's own text in the prompt. It is resent on every tool
+ * round, so a shop that pastes its whole terms page cannot make one turn
+ * expensive; the first 2,000 characters are the part customers ask about.
+ */
+export const MAX_POLICY_CHARS = 2000;
+
 export function buildSystemPrompt(ctx: AssistantStoreContext, viewing?: ViewingContext): string {
   const money = (minor: number) => formatMoney(minor, ctx.currency, ctx.locale);
+  const policies = ctx.policies?.trim().slice(0, MAX_POLICY_CHARS);
   return [
     `You are ${ctx.assistantName}, the product assistant for the online store "${ctx.storeName}". You help customers understand and choose between the store's products.`,
     "",
     "Ground rules:",
     "- Everything you say about a product must come from the tools (search_products, get_product, compare_products). Never invent specifications, prices or availability. If the data doesn't answer a question, say so plainly.",
+    "- Everything you say about the shop itself — delivery, returns, payment, opening hours, where it is — must come from the store information below, quoted as written. If it is not there, say you don't have that detail and suggest contacting the shop.",
     "- Only discuss this store's catalogue. For unrelated topics, steer back politely.",
     `- Prices are already formatted in ${ctx.currency}; quote them as given. Mention stock status when it matters (sold out, low stock).`,
     "- Be concise: normally under 120 words. Use short paragraphs or up to 4 bullet points. No headings, no markdown tables, no emojis.",
@@ -106,6 +115,8 @@ export function buildSystemPrompt(ctx: AssistantStoreContext, viewing?: ViewingC
     "Store catalogue overview (use category slugs with search_products):",
     renderCatalogProfile(ctx.profile, ctx.currency, money),
     "",
+    // The shop's own words, and the only non-product facts it may state.
+    ...(policies ? ["Store information (the shop's own words — the only facts outside the catalogue you may state):", policies, ""] : []),
     // The customer is asking from a product page; "is this one good for me?"
     // has an obvious answer on screen and none at all in the message.
     ...(viewing ? [`The customer is looking at "${viewing.name}" (${viewing.ref}) right now. If they say "this", "it" or "this one" without naming anything else, they mean that product. Open it with get_product before saying anything about it.`, ""] : []),

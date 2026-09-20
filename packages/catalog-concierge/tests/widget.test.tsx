@@ -578,3 +578,22 @@ describe("ConciergeWidget — putting the earlier conversation back", () => {
     expect(screen.getByText("Here are two options.")).toBeTruthy();
   });
 });
+
+describe("ConciergeWidget — reaching a person", () => {
+  it("offers the host's way out, opened in a new tab", () => {
+    renderWidget({ handoff: { label: "Message us on WhatsApp", href: "https://wa.me/60123456789" } });
+    openWidget();
+
+    const link = screen.getByRole("link", { name: "Message us on WhatsApp" });
+    expect(link.getAttribute("href")).toBe("https://wa.me/60123456789");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toBe("noreferrer");
+    expect(screen.getByText(/Need a person\?/)).toBeTruthy();
+  });
+
+  it("says nothing about a person when the host offers none", () => {
+    renderWidget();
+    openWidget();
+    expect(screen.queryByText(/Need a person\?/)).toBeNull();
+  });
+});

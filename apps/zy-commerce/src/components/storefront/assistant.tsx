@@ -24,11 +24,13 @@ export function StorefrontAssistant({
   greeting,
   starterSuggestions,
   configured,
+  handoff,
 }: {
   assistantName: string;
   greeting: string;
   starterSuggestions: string[];
   configured: boolean;
+  handoff?: { label: string; href: string };
 }) {
   // Which page the question was asked from. The action resolves it against the
   // catalogue, so the assistant knows what "this one" means on a product page.
@@ -40,6 +42,7 @@ export function StorefrontAssistant({
       greeting={greeting}
       starterSuggestions={starterSuggestions}
       configured={configured}
+      handoff={handoff}
       privacyNote={PRIVACY_NOTE}
       onSend={(input) => askAssistantAction({ ...input, path: pathname })}
       onNewChat={startNewChatAction}

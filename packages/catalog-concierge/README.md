@@ -110,6 +110,25 @@ A host that keeps history server-side has the assistant remembering a conversati
 
 It is asked for once, when the chat is first opened, and never again after **New chat**. Failures are ignored — the customer can still ask their question. `toProductCard()` is exported so a restored card is built exactly like the one the reply drew.
 
+### Answering questions a catalogue cannot
+
+Customers ask about delivery, returns and opening hours constantly, and no product record contains them. Put the shop's own words in `store.policies` and they become the only non-product facts the assistant may state — quoted as written, never paraphrased or invented.
+
+```ts
+await askConcierge({
+  store: { …, policies: "Delivery: free over RM 200, 2–4 working days.\nReturns: 14 days, unused." },
+  adapter,
+}, { message, history });
+```
+
+Anything the text does not cover is still "I don't have that detail", followed by an offer to contact the shop. The first `MAX_POLICY_CHARS` (2,000) characters reach the prompt: it is resent on every tool round, so a pasted terms page cannot make a single turn expensive.
+
+Pair it with `handoff`, a way to reach a person, which the widget shows under the conversation:
+
+```tsx
+<ConciergeWidget handoff={{ label: "Message us on WhatsApp", href: "https://wa.me/60123456789" }} … />
+```
+
 ### Knowing which page the question came from
 
 `askConcierge` takes `viewing`: the reference of the product the customer has open. It has to be a product in the catalogue — anything else is ignored, so a host can pass whatever its page says without trusting it.

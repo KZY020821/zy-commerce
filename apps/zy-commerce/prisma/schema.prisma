@@ -95,6 +95,13 @@ model Tenant {
   assistantName     String  @default("Product Assistant")
   /// Optional opening line; when null a generic greeting is generated from the catalogue.
   assistantGreeting String?
+  /// Shop facts the assistant may state: delivery, returns, opening hours,
+  /// anything a customer asks that is not in the catalogue. Everything else it
+  /// says must come from product data, so an empty field means "I don't know".
+  assistantPolicies String?
+  /// WhatsApp number in international format for the widget's handover to a
+  /// person ("+60123456789"). Falls back to contactEmail when empty.
+  supportWhatsapp   String?
 
   /// SHA-1 of the last imported catalogue file; lets the seed skip an unchanged import.
   catalogFingerprint String?

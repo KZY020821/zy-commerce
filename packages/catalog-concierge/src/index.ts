@@ -35,7 +35,7 @@ export { buildStarterSuggestions } from "./starters";
 export { assistantTools, runAssistantTool, searchCatalogue, summariseCategories, type SearchFilters, type ToolContext } from "./tools";
 
 // The raw tool loop, for hosts that want to drive it themselves.
-export { buildSystemPrompt, runAssistant, trimHistory, MAX_HISTORY_CHARS, MAX_TOOL_ROUNDS, type AssistantReply, type AssistantStoreContext, type MessagesClient, type ViewingContext } from "./assistant";
+export { buildSystemPrompt, runAssistant, trimHistory, MAX_HISTORY_CHARS, MAX_POLICY_CHARS, MAX_TOOL_ROUNDS, type AssistantReply, type AssistantStoreContext, type MessagesClient, type ViewingContext } from "./assistant";
 
 // Model client resolution (any OpenAI-compatible endpoint).
 export { getModelClient, isAssistantConfigured, resolveModelConfig, DEFAULT_MODEL, type ModelConfig } from "./model";

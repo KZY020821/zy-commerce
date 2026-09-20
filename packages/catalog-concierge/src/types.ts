@@ -74,6 +74,16 @@ export interface StoreProfile {
   locale: string;
   /** ISO 3166-1 alpha-2. Helps the model with regional phrasing. */
   country?: string;
+  /**
+   * Free text of everything true about the shop that is not a product:
+   * delivery, returns, opening hours, where it is.
+   *
+   * Customers ask these constantly and a catalogue cannot answer them, so
+   * without this the assistant can only say it does not know. It is the only
+   * non-product source the model may state, it is quoted rather than
+   * paraphrased, and anything it does not cover is still "I don't know".
+   */
+  policies?: string;
 }
 
 /** One exchange in the visible conversation. */

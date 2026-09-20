@@ -35,6 +35,8 @@ interface DemoStore {
   brandColor: string;
   assistantName: string;
   assistantGreeting: string;
+  /** Delivery, returns and opening hours, so the demo can answer them. */
+  assistantPolicies: string;
   contactEmail: string;
   adminEmail: string;
   currency: string;
@@ -52,6 +54,12 @@ const DEMO_STORES: DemoStore[] = [
     brandColor: "#111111",
     assistantName: "Selkirk Fit Assistant",
     assistantGreeting: "Hi! I know every product in this store. Tell me how you play or what you're after and I'll help you find the right fit.",
+    assistantPolicies: [
+      "Delivery: free within Malaysia on orders over RM 200, otherwise RM 5 flat. West Malaysia 2–4 working days, East Malaysia 4–7 working days. Singapore 5–8 working days.",
+      "Returns: 14 days from delivery, unused and in the original packaging. Paddles with court marks cannot be returned.",
+      "Payment: online banking (FPX), credit and debit cards.",
+      "Opening hours: Monday to Saturday, 10am to 7pm (MYT). This is a demonstration store — nothing here is really for sale.",
+    ].join("\n"),
     contactEmail: "hello@demo.example.com",
     adminEmail: "admin@demo.example.com",
     currency: "MYR",
@@ -67,6 +75,12 @@ const DEMO_STORES: DemoStore[] = [
     brandColor: "#111111",
     assistantName: "Nike Game Fit",
     assistantGreeting: "Hey! Tell me how you play or what you need on court, and I'll find the right gear from this store.",
+    assistantPolicies: [
+      "Delivery: free standard shipping on orders over $50, otherwise $7. Standard 3–5 business days, express 2 business days.",
+      "Returns: 30 days, unworn and with the original packaging.",
+      "Payment: credit and debit cards.",
+      "Opening hours: online only, orders ship Monday to Friday. This is a demonstration store — nothing here is really for sale.",
+    ].join("\n"),
     contactEmail: "hello@nike.example.com",
     adminEmail: "admin@nike.example.com",
     currency: "USD",
@@ -137,8 +151,11 @@ async function seedDemoStore(store: DemoStore) {
 
   const tenant = await db.tenant.upsert({
     where: { slug: store.slug },
-    // Name, branding and assistant settings follow the seed until the Phase 5 settings UI exists.
-    update: { name: storeName, primaryColor: brandColor, assistantName, assistantGreeting },
+    // Name and branding follow the seed until there is a UI for them. The
+    // assistant's own settings deliberately do not: a store admin can edit
+    // them (Settings → Assistant), and every production deploy re-runs this
+    // seed, which would quietly undo their work.
+    update: { name: storeName, primaryColor: brandColor },
     create: {
       slug: store.slug,
       name: storeName,
@@ -146,6 +163,7 @@ async function seedDemoStore(store: DemoStore) {
       primaryColor: brandColor,
       assistantName,
       assistantGreeting,
+      assistantPolicies: store.assistantPolicies,
       contactEmail: store.contactEmail,
       currency: readEnv(`${p}_CURRENCY`, store.currency).toUpperCase(),
       country: readEnv(`${p}_COUNTRY`, store.country).toUpperCase(),
@@ -154,6 +172,10 @@ async function seedDemoStore(store: DemoStore) {
       taxRateBps: 0,
     },
   });
+  // Filled in once, for stores created before there was anywhere to write it.
+  // Never an overwrite: what the admin has typed is theirs.
+  await db.tenant.updateMany({ where: { id: tenant.id, assistantPolicies: null }, data: { assistantPolicies: store.assistantPolicies } });
+
   console.log(`✓ Tenant "${tenant.name}" ready at ${tenantOrigin(tenant.slug)}`);
 
   if (readEnv(`${p}_CATALOG`, "true") === "true") await seedDemoCatalog(tenant.id, tenant.catalogFingerprint, store.catalog);

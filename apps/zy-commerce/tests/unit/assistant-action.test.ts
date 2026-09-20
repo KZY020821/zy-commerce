@@ -256,6 +256,23 @@ describe("startNewChatAction — New chat starts a new thread on the server", ()
   });
 });
 
+describe("askAssistantAction — what the shop says about itself", () => {
+  it("passes the store's own information to the assistant", async () => {
+    vi.mocked(requireCurrentTenant).mockResolvedValueOnce({ ...tenant, assistantPolicies: "Delivery: free over RM 200." } as never);
+
+    await askAssistantAction({ message: "do you deliver to Sabah?" });
+
+    expect(askConcierge).toHaveBeenCalledWith(expect.objectContaining({ store: expect.objectContaining({ policies: "Delivery: free over RM 200." }) }), expect.anything());
+  });
+
+  it("passes none when the shop has written none, so the assistant keeps saying it doesn't know", async () => {
+    await askAssistantAction({ message: "do you deliver to Sabah?" });
+
+    const [options] = vi.mocked(askConcierge).mock.calls[0]!;
+    expect("policies" in options.store).toBe(false);
+  });
+});
+
 describe("askAssistantAction — the page the question was asked from", () => {
   it("tells the assistant which product is on screen, resolved from our own catalogue", async () => {
     db.product.findFirst.mockResolvedValueOnce({ sku: "PAD-1" });

@@ -175,7 +175,16 @@ export async function askAssistantAction(raw: { message: string; history?: Conve
   try {
     const reply = await askConcierge(
       {
-        store: { storeName: tenant.name, assistantName: tenant.assistantName, currency: tenant.currency, locale: tenant.locale, country: tenant.country },
+        store: {
+          storeName: tenant.name,
+          assistantName: tenant.assistantName,
+          currency: tenant.currency,
+          locale: tenant.locale,
+          country: tenant.country,
+          // Delivery, returns, opening hours: the questions a catalogue cannot
+          // answer, in the shop's own words.
+          ...(tenant.assistantPolicies ? { policies: tenant.assistantPolicies } : {}),
+        },
         adapter,
       },
       { message: parsed.data.message, history: historyForModel(previous), viewing },

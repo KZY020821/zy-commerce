@@ -45,6 +45,8 @@ export interface WidgetLabels {
   jumpToLatest: string;
   /** Divider above messages restored from an earlier visit. */
   earlier: string;
+  /** Precedes the link to a person, e.g. "Need a person?". */
+  handoffPrompt: string;
   /** Shown while that conversation is being fetched. */
   restoring: string;
   /** The chip offered when a reply failed. Tapping it re-sends the question. */
@@ -68,6 +70,7 @@ export const DEFAULT_WIDGET_LABELS: WidgetLabels = {
   newChatFailed: "Couldn't start a new chat. Please try again.",
   jumpToLatest: "Jump to latest",
   earlier: "Earlier in this chat",
+  handoffPrompt: "Need a person?",
   restoring: "Looking for your last chat…",
   retry: "Try again",
   priceFrom: "from ",
@@ -108,6 +111,13 @@ export interface ConciergeWidgetProps {
   renderProductLink?: (product: ProductCard, children: ReactNode) => ReactNode;
   /** Translations / rewording. Anything omitted keeps its English default. */
   labels?: Partial<WidgetLabels>;
+  /**
+   * A way to reach a human: WhatsApp, email, a contact page.
+   *
+   * An assistant that cannot help is where most shops lose the sale, so the
+   * way out is on screen rather than waiting to be asked for.
+   */
+  handoff?: { label: string; href: string };
   /**
    * One short line under the message box saying what happens to what the
    * customer types, e.g. "Chats are saved to improve this store's answers."
@@ -163,6 +173,7 @@ export function ConciergeWidget({
   configured = true,
   renderProductLink,
   labels,
+  handoff,
   privacyNote,
   shortcutKey = "k",
   placeholder,
@@ -527,6 +538,15 @@ export function ConciergeWidget({
       </div>
 
       <div className="border-t pb-[env(safe-area-inset-bottom)]">
+        {handoff ? (
+          <p className="px-4 pt-2.5 text-xs text-muted-foreground">
+            {text.handoffPrompt}{" "}
+            <a href={handoff.href} target="_blank" rel="noreferrer" className="font-medium text-foreground underline underline-offset-2 transition hover:opacity-80">
+              {handoff.label}
+            </a>
+          </p>
+        ) : null}
+
         {last?.suggestions && last.suggestions.length > 0 && !pending ? (
           <div className="flex flex-wrap gap-2 px-4 pt-3">
             {last.suggestions.map((s) => (
