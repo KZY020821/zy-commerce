@@ -98,7 +98,29 @@ import { ConciergeWidget } from "catalog-concierge/react";
 
 `onNewChat` runs when the customer taps **New chat**, before the screen clears. If you keep history on the server, as above, use it to start a fresh thread there — the reference app issues a new session cookie. Without it the widget only clears what it shows.
 
-The message box grows with the text to about six lines, then scrolls inside itself, so a long question is always readable at once. Enter sends and Shift+Enter starts a new line; an input method's Enter (choosing a Chinese or Japanese word) never sends.
+The message box grows with the text to about six lines, then scrolls inside itself, so a long question is always readable at once. Enter sends and Shift+Enter starts a new line; an input method's Enter (choosing a Chinese or Japanese word) never sends. Ctrl/⌘ + Shift + K opens and closes the chat from anywhere on the page — pass `shortcutKey` to change the letter, or `null` to bind nothing.
+
+### Saying it in your customers' language
+
+Every fixed word in the widget comes from `labels`. Pass the ones you want changed; the rest stay in English.
+
+```tsx
+<ConciergeWidget
+  labels={{ launcher: "Tanya {name}", send: "Hantar", placeholder: "Tanya tentang mana-mana produk…" }}
+  privacyNote="Sembang disimpan untuk menambah baik jawapan kedai ini."
+  …
+/>
+```
+
+`DEFAULT_WIDGET_LABELS` is exported, so `{ ...DEFAULT_WIDGET_LABELS, ...yours }` is the full list of keys. The model answers in whatever language the customer writes in; `labels` covers the interface around it.
+
+`privacyNote` is one line under the message box saying what happens to what the customer types. Nothing is shown unless you pass it — only you know what your integration stores.
+
+### On a phone
+
+Below 640px the panel covers the screen, and behaves accordingly: it is a modal dialog, Tab stays inside it, and it resizes to the space the on-screen keyboard leaves so the send button is never under the keyboard. It also keeps clear of the home indicator. On a larger screen it is a 420px panel in the corner that does not trap focus.
+
+Scrolling back through a long answer no longer means missing the next one: new replies stop pulling the view down, and a **Jump to latest** button appears until you are back at the bottom.
 
 The widget has no design-system dependency. It uses Tailwind utility classes and the CSS variables most Tailwind setups already define (`--primary`, `--background`, `--muted`, `--input`, `--ring`), so it inherits your theme automatically.
 

@@ -178,10 +178,10 @@ describe("askAssistantAction — what is recorded", () => {
 
 describe("askAssistantAction — model failures, in words a customer can act on", () => {
   const cases: Array<[string, unknown, RegExp]> = [
-    ["invalid key", new OpenAI.AuthenticationError(401, { message: "bad key" }, "bad key", new Headers()), /API key is invalid/],
-    ["no access", new OpenAI.PermissionDeniedError(403, { message: "denied" }, "denied", new Headers()), /doesn't have access to this model/],
+    ["invalid key", new OpenAI.AuthenticationError(401, { message: "bad key" }, "bad key", new Headers()), /unavailable right now/],
+    ["no access", new OpenAI.PermissionDeniedError(403, { message: "denied" }, "denied", new Headers()), /unavailable right now/],
     ["rate limited", new OpenAI.RateLimitError(429, { message: "slow down" }, "slow down", new Headers()), /busy right now/],
-    ["other API error", new OpenAI.APIError(500, { message: "boom" }, "boom", new Headers()), /couldn't reach its model/],
+    ["other API error", new OpenAI.APIError(500, { message: "boom" }, "boom", new Headers()), /unavailable right now/],
     ["anything else", new Error("unexpected"), /Something went wrong/],
   ];
 
@@ -192,6 +192,18 @@ describe("askAssistantAction — model failures, in words a customer can act on"
       expect(db.chatConversation.create).not.toHaveBeenCalled();
     });
   }
+
+  // A shopper can't fix a key, an account or a quota, and telling them which
+  // vendor is behind the assistant only advertises the plumbing.
+  it("never names the model provider or blames the store owner, and logs the detail instead", async () => {
+    for (const [, error] of cases) {
+      vi.mocked(askConcierge).mockRejectedValueOnce(error);
+      const result = await askAssistantAction({ message: "show me paddles" });
+      const shown = result.ok ? "" : result.error;
+      expect(shown).not.toMatch(/deepseek|openai|api key|store owner|configuration/i);
+      expect(console.error).toHaveBeenCalledWith("[assistant] failed", error);
+    }
+  });
 });
 
 describe("startNewChatAction — New chat starts a new thread on the server", () => {

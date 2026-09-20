@@ -101,6 +101,12 @@ describe("StorefrontAssistant", () => {
     expect(screen.getByText(/not connected to a model yet/)).toBeTruthy();
   });
 
+  it("tells customers their chat is kept, because this store keeps it", () => {
+    render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
+    expect(screen.getByText("Chats are saved so this store can improve its answers.")).toBeTruthy();
+  });
+
   it("wires New chat to the server, so the assistant forgets the old thread", async () => {
     vi.mocked(askAssistantAction).mockResolvedValue({ ok: true, answer: "Try the Atlas.", suggestions: [], products: [] });
     vi.mocked(startNewChatAction).mockResolvedValue(undefined);

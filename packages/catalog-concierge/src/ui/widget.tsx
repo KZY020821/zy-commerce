@@ -6,6 +6,9 @@
  * function, usually a Server Action or a fetch to its own route, and — when it
  * keeps the conversation on its own side — an `onNewChat` that forgets it.
  *
+ * Every word it says comes from `labels`, so a store that sells in Malay or
+ * Chinese can translate the interface without forking the component.
+ *
  * Styling uses Tailwind utility classes and the CSS custom properties that
  * shadcn/ui and most Tailwind setups already define: --primary, --background,
  * --muted and friends. A project without them still renders a usable widget,
@@ -17,6 +20,50 @@ import type { ConversationTurn, ProductCard, StockLabel } from "../types";
 export type WidgetSendResult =
   | { ok: true; answer: string; suggestions: string[]; products: ProductCard[] }
   | { ok: false; error: string };
+
+/** Every fixed string the widget shows. Override any subset through `labels`. */
+export interface WidgetLabels {
+  /** Launcher button. `{name}` is replaced with the assistant's name. */
+  launcher: string;
+  /** The line under the assistant's name in the header. */
+  subtitle: string;
+  newChat: string;
+  close: string;
+  /** Accessible name of the message box. */
+  messageLabel: string;
+  send: string;
+  placeholder: string;
+  offlinePlaceholder: string;
+  offlineNotice: string;
+  /** Read out while a reply is being prepared. */
+  thinking: string;
+  /** Keyboard help under the box. Desktop only — it mentions Enter. */
+  inputHint: string;
+  newChatFailed: string;
+  jumpToLatest: string;
+  /** The chip offered when a reply failed. Tapping it re-sends the question. */
+  retry: string;
+  /** Prefix for a price that varies by variant, e.g. "from RM 220.90". */
+  priceFrom: string;
+}
+
+export const DEFAULT_WIDGET_LABELS: WidgetLabels = {
+  launcher: "Ask {name}",
+  subtitle: "Answers from the product specs in this store",
+  newChat: "Start a new chat",
+  close: "Close chat",
+  messageLabel: "Message",
+  send: "Send",
+  placeholder: "Ask about any product…",
+  offlinePlaceholder: "Assistant offline",
+  offlineNotice: "The assistant is not connected to a model yet. Once a model key is configured it will answer questions from the product catalogue.",
+  thinking: "Checking the catalogue…",
+  inputHint: "Enter to send · Shift+Enter for a new line",
+  newChatFailed: "Couldn't start a new chat. Please try again.",
+  jumpToLatest: "Jump to latest",
+  retry: "Try again",
+  priceFrom: "from ",
+};
 
 export interface ConciergeWidgetProps {
   /** Display name in the header and on the launcher button. */
@@ -40,6 +87,20 @@ export interface ConciergeWidgetProps {
   configured?: boolean;
   /** Rendered when a product card is clicked. Defaults to a plain anchor. */
   renderProductLink?: (product: ProductCard, children: ReactNode) => ReactNode;
+  /** Translations / rewording. Anything omitted keeps its English default. */
+  labels?: Partial<WidgetLabels>;
+  /**
+   * One short line under the message box saying what happens to what the
+   * customer types, e.g. "Chats are saved to improve this store's answers."
+   * Nothing is shown when it is omitted — only the host knows what it stores.
+   */
+  privacyNote?: string;
+  /**
+   * Letter that opens and closes the chat with Ctrl/⌘ + Shift. Defaults to
+   * "k"; pass null for no shortcut.
+   */
+  shortcutKey?: string | null;
+  /** Shortcut for `labels.placeholder`, kept for hosts that already pass it. */
   placeholder?: string;
   maxLength?: number;
 }
@@ -57,6 +118,14 @@ interface UiMessage {
 /** About six lines of text. Past that the box scrolls — downwards, never sideways. */
 const MESSAGE_BOX_HEIGHT = "max-h-[9.75rem]";
 
+/** Below this the panel covers the screen, which changes how it must behave. */
+const PHONE_QUERY = "(max-width: 639px)";
+
+/** Distance from the bottom of the transcript that counts as "scrolled away". */
+const STICKY_SLACK_PX = 48;
+
+const FOCUSABLE = 'button:not([disabled]), textarea:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+
 const STOCK_BADGE: Record<StockLabel, string> = {
   "In stock": "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
   "Low stock": "bg-amber-500/15 text-amber-800 dark:text-amber-300",
@@ -71,9 +140,13 @@ export function ConciergeWidget({
   onNewChat,
   configured = true,
   renderProductLink,
-  placeholder = "Ask about any product…",
+  labels,
+  privacyNote,
+  shortcutKey = "k",
+  placeholder,
   maxLength = 1000,
 }: ConciergeWidgetProps) {
+  const text = { ...DEFAULT_WIDGET_LABELS, ...labels };
   const opening: UiMessage = { role: "assistant", content: greeting, suggestions: starterSuggestions };
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
@@ -81,14 +154,32 @@ export function ConciergeWidget({
   const [pending, startTransition] = useTransition();
   const [resetting, setResetting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [scrolledAway, setScrolledAway] = useState(false);
+  const [fullScreen, setFullScreen] = useState(false);
+  /** Height of the part of the screen the browser is actually showing. */
+  const [visibleHeight, setVisibleHeight] = useState<number | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLTextAreaElement>(null);
   const launcherRef = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(false);
   const wasPending = useRef(false);
+  /** False once the customer scrolls up: new replies must not yank them back. */
+  const stickToBottom = useRef(true);
+
+  /** Scrolls the transcript to the newest message and follows it from then on. */
+  function scrollToLatest() {
+    const list = listRef.current;
+    if (!list) return;
+    list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
+    stickToBottom.current = true;
+    // Only ever called with something to change: a redundant state update here
+    // would land inside the transition that is loading a reply and hold it open.
+    if (scrolledAway) setScrolledAway(false);
+  }
 
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+    if (stickToBottom.current) scrollToLatest();
   }, [messages, pending, open]);
 
   // Opening puts the cursor in the message box; closing hands focus back to the launcher.
@@ -112,20 +203,80 @@ export function ConciergeWidget({
     if (box.scrollHeight > 0) box.style.height = `${box.scrollHeight}px`;
   }, [input, open]);
 
-  function send(text: string, base: UiMessage[] = messages) {
-    const message = text.trim();
+  // On a phone the panel covers the page, so it behaves as a modal: focus stays
+  // inside it. On a larger screen it is a panel beside the page and does not.
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia(PHONE_QUERY);
+    const sync = () => setFullScreen(query.matches);
+    sync();
+    query.addEventListener?.("change", sync);
+    return () => query.removeEventListener?.("change", sync);
+  }, []);
+
+  // An on-screen keyboard shrinks the visible area without moving a fixed
+  // element, which is how the send button ends up underneath it. The visual
+  // viewport is the only thing that knows the real height.
+  useEffect(() => {
+    const viewport = typeof window === "undefined" ? null : window.visualViewport;
+    if (!viewport || !open || !fullScreen) {
+      setVisibleHeight(null);
+      return;
+    }
+    const sync = () => setVisibleHeight(viewport.height);
+    sync();
+    viewport.addEventListener("resize", sync);
+    return () => viewport.removeEventListener("resize", sync);
+  }, [open, fullScreen]);
+
+  // Ctrl/⌘ + Shift + K from anywhere on the page, including while the customer
+  // is typing in one of the store's own fields.
+  useEffect(() => {
+    if (!shortcutKey || typeof document === "undefined") return;
+    const wanted = shortcutKey.toLowerCase();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!e.shiftKey || !(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== wanted) return;
+      e.preventDefault();
+      setOpen((wasOpenNow) => !wasOpenNow);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [shortcutKey]);
+
+  /** Keeps Tab inside the panel while it is the only thing on screen. */
+  function trapFocus(e: React.KeyboardEvent) {
+    const panel = panelRef.current;
+    if (!fullScreen || !panel) return;
+    const stops = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    if (stops.length === 0) return;
+    const first = stops[0]!;
+    const last = stops[stops.length - 1]!;
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  function send(messageText: string, base: UiMessage[] = messages) {
+    const message = messageText.trim();
     if (!message || pending || resetting || !configured) return;
     setNotice(null);
     // The greeting is ours, not part of the conversation the model sees.
     const history: ConversationTurn[] = base.filter((m) => !m.error).slice(1).map((m) => ({ role: m.role, content: m.content }));
     setMessages((prev) => [...prev, { role: "user", content: message }]);
     setInput("");
+    // Sending is a deliberate act: follow the answer even if they had scrolled up.
+    stickToBottom.current = true;
+    if (scrolledAway) setScrolledAway(false);
     startTransition(async () => {
       const result = await onSend({ message, history });
       setMessages((prev) =>
         result.ok
           ? [...prev, { role: "assistant", content: result.answer, suggestions: result.suggestions, products: result.products }]
-          : [...prev, { role: "assistant", content: result.error, error: true, suggestions: ["Try again"], retry: message }],
+          : [...prev, { role: "assistant", content: result.error, error: true, suggestions: [text.retry], retry: message }],
       );
     });
   }
@@ -146,7 +297,7 @@ export function ConciergeWidget({
       setMessages([opening]);
       setInput("");
     } catch {
-      setNotice("Couldn't start a new chat. Please try again.");
+      setNotice(text.newChatFailed);
     } finally {
       setResetting(false);
       boxRef.current?.focus();
@@ -156,6 +307,7 @@ export function ConciergeWidget({
   const last = messages[messages.length - 1];
   const started = messages.length > 1;
   const initial = assistantName.trim().charAt(0).toUpperCase() || "?";
+  const boxPlaceholder = placeholder ?? text.placeholder;
 
   if (!open) {
     return (
@@ -164,19 +316,24 @@ export function ConciergeWidget({
         type="button"
         onClick={() => setOpen(true)}
         aria-expanded={false}
-        className="fixed right-4 bottom-4 z-40 flex items-center gap-2 rounded-full bg-primary py-3 pr-5 pl-4 text-sm font-medium text-primary-foreground shadow-lg transition hover:opacity-90 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+        className="fixed right-4 bottom-[max(1rem,env(safe-area-inset-bottom))] z-40 flex items-center gap-2 rounded-full bg-primary py-3 pr-5 pl-4 text-sm font-medium text-primary-foreground shadow-lg transition hover:opacity-90 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
       >
         <ChatIcon />
-        <span>{`Ask ${assistantName}`}</span>
+        <span>{text.launcher.replace("{name}", assistantName)}</span>
       </button>
     );
   }
 
   return (
     <section
+      ref={panelRef}
+      role="dialog"
       aria-label={assistantName}
+      aria-modal={fullScreen || undefined}
+      style={visibleHeight ? { height: `${visibleHeight}px` } : undefined}
       onKeyDown={(e) => {
         if (e.key === "Escape") setOpen(false);
+        if (e.key === "Tab") trapFocus(e);
       }}
       className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-background text-foreground sm:inset-auto sm:right-4 sm:bottom-4 sm:h-[min(640px,calc(100dvh-2rem))] sm:w-[420px] sm:rounded-2xl sm:border sm:shadow-2xl"
     >
@@ -189,15 +346,15 @@ export function ConciergeWidget({
           {/* The ellipsis needs its own inline box: text-overflow does nothing on a flex container. */}
           <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
             <span aria-hidden className={configured ? "size-1.5 shrink-0 rounded-full bg-emerald-500" : "size-1.5 shrink-0 rounded-full bg-muted-foreground/50"} />
-            <span className="truncate">Answers from the product specs in this store</span>
+            <span className="truncate">{text.subtitle}</span>
           </p>
         </div>
         {started ? (
-          <IconButton label="Start a new chat" onClick={startNewChat} disabled={pending || resetting}>
+          <IconButton label={text.newChat} onClick={startNewChat} disabled={pending || resetting}>
             <NewChatIcon />
           </IconButton>
         ) : null}
-        <IconButton label="Close chat" onClick={() => setOpen(false)}>
+        <IconButton label={text.close} onClick={() => setOpen(false)}>
           <CloseIcon />
         </IconButton>
       </header>
@@ -208,82 +365,105 @@ export function ConciergeWidget({
         </p>
       ) : null}
 
-      {/* Replies arrive without the reader moving focus, so they have to be
-          announced. `polite` waits for a pause rather than interrupting. */}
-      <div ref={listRef} role="log" aria-live="polite" aria-atomic="false" aria-busy={pending} className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
-        {!configured ? (
-          <div className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground">
-            The assistant is not connected to a model yet. Once a model key is configured it will answer questions from the product catalogue.
-          </div>
-        ) : null}
+      <div className="relative min-h-0 flex-1">
+        {/* Replies arrive without the reader moving focus, so they have to be
+            announced. `polite` waits for a pause rather than interrupting. */}
+        <div
+          ref={listRef}
+          role="log"
+          aria-live="polite"
+          aria-atomic="false"
+          aria-busy={pending}
+          onScroll={(e) => {
+            const list = e.currentTarget;
+            const away = list.scrollHeight - list.scrollTop - list.clientHeight > STICKY_SLACK_PX;
+            stickToBottom.current = !away;
+            setScrolledAway(away);
+          }}
+          className="h-full space-y-4 overflow-y-auto px-4 py-4"
+        >
+          {!configured ? <div className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground">{text.offlineNotice}</div> : null}
 
-        {messages.map((m, i) => (
-          <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
-            <div className={m.role === "user" ? "max-w-[85%]" : m.products?.length ? "w-full max-w-[92%] space-y-2" : "max-w-[92%]"}>
-              <div
-                className={
-                  m.role === "user"
-                    ? "rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap text-primary-foreground"
-                    : m.error
-                      ? "rounded-2xl rounded-bl-md border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-[0.9375rem] leading-relaxed"
-                      : "rounded-2xl rounded-bl-md bg-muted px-3.5 py-2.5 text-[0.9375rem] leading-relaxed break-words whitespace-pre-line"
-                }
-              >
-                {m.content}
-              </div>
-
-              {m.products && m.products.length > 0 ? (
-                <div className="grid gap-2">
-                  {m.products.map((p) => {
-                    const body = (
-                      <>
-                        <span className="block size-16 shrink-0 overflow-hidden rounded-lg bg-muted">
-                          {/* Plain <img> on purpose: the package stays framework-agnostic. */}
-                          {p.imageUrl ? <img src={p.imageUrl} alt="" className="size-full object-cover" loading="lazy" /> : null}
-                        </span>
-                        <span className="min-w-0 flex-1 space-y-1">
-                          <span className="line-clamp-2 block text-sm leading-snug font-medium">{p.name}</span>
-                          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                            <span className="text-sm font-semibold">
-                              {p.priceFrom ? <span className="font-normal text-muted-foreground">from </span> : null}
-                              {p.priceLabel}
-                            </span>
-                            <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STOCK_BADGE[p.stockLabel]}`}>{p.stockLabel}</span>
-                          </span>
-                        </span>
-                        <ChevronIcon />
-                      </>
-                    );
-                    const className = "flex items-center gap-3 rounded-xl border bg-card p-2.5 text-left transition hover:border-foreground/20 hover:bg-muted/40";
-                    return renderProductLink ? (
-                      <div key={p.ref} className="contents">
-                        {renderProductLink(p, <span className={className}>{body}</span>)}
-                      </div>
-                    ) : (
-                      <a key={p.ref} href={p.url ?? "#"} className={className}>
-                        {body}
-                      </a>
-                    );
-                  })}
+          {messages.map((m, i) => (
+            <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
+              <div className={m.role === "user" ? "max-w-[85%]" : m.products?.length ? "w-full max-w-[92%] space-y-2" : "max-w-[92%]"}>
+                <div
+                  className={
+                    m.role === "user"
+                      ? "rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap text-primary-foreground"
+                      : m.error
+                        ? "rounded-2xl rounded-bl-md border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-[0.9375rem] leading-relaxed"
+                        : "rounded-2xl rounded-bl-md bg-muted px-3.5 py-2.5 text-[0.9375rem] leading-relaxed break-words whitespace-pre-line"
+                  }
+                >
+                  {m.content}
                 </div>
-              ) : null}
-            </div>
-          </div>
-        ))}
 
-        {pending ? (
-          <div className="flex justify-start">
-            <div role="status" className="flex items-center gap-1 rounded-2xl rounded-bl-md bg-muted px-4 py-3.5">
-              <span className="sr-only">Checking the catalogue…</span>
-              {[0, 160, 320].map((delay) => (
-                <span key={delay} aria-hidden className="size-1.5 rounded-full bg-muted-foreground/60 motion-safe:animate-bounce" style={{ animationDelay: `${delay}ms` }} />
-              ))}
+                {m.products && m.products.length > 0 ? (
+                  <div className="grid gap-2">
+                    {m.products.map((p) => {
+                      const body = (
+                        <>
+                          <span className="block size-16 shrink-0 overflow-hidden rounded-lg bg-muted">
+                            {/* Plain <img> on purpose: the package stays framework-agnostic. */}
+                            {p.imageUrl ? <img src={p.imageUrl} alt="" className="size-full object-cover" loading="lazy" /> : null}
+                          </span>
+                          <span className="min-w-0 flex-1 space-y-1">
+                            <span className="line-clamp-2 block text-sm leading-snug font-medium">{p.name}</span>
+                            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span className="text-sm font-semibold">
+                                {p.priceFrom ? <span className="font-normal text-muted-foreground">{text.priceFrom}</span> : null}
+                                {p.priceLabel}
+                              </span>
+                              <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STOCK_BADGE[p.stockLabel]}`}>{p.stockLabel}</span>
+                            </span>
+                          </span>
+                          <ChevronIcon />
+                        </>
+                      );
+                      const className = "flex items-center gap-3 rounded-xl border bg-card p-2.5 text-left transition hover:border-foreground/20 hover:bg-muted/40";
+                      return renderProductLink ? (
+                        <div key={p.ref} className="contents">
+                          {renderProductLink(p, <span className={className}>{body}</span>)}
+                        </div>
+                      ) : (
+                        <a key={p.ref} href={p.url ?? "#"} className={className}>
+                          {body}
+                        </a>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
             </div>
-          </div>
+          ))}
+
+          {pending ? (
+            <div className="flex justify-start">
+              <div role="status" className="flex items-center gap-1 rounded-2xl rounded-bl-md bg-muted px-4 py-3.5">
+                <span className="sr-only">{text.thinking}</span>
+                {[0, 160, 320].map((delay) => (
+                  <span key={delay} aria-hidden className="size-1.5 rounded-full bg-muted-foreground/60 motion-safe:animate-bounce" style={{ animationDelay: `${delay}ms` }} />
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Reading back through a long answer should not mean missing the next one. */}
+        {scrolledAway ? (
+          <button
+            type="button"
+            onClick={() => scrollToLatest()}
+            className="absolute inset-x-0 bottom-3 mx-auto flex w-fit items-center gap-1.5 rounded-full border bg-background px-3 py-1.5 text-xs font-medium shadow-md transition hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+          >
+            <DownIcon />
+            {text.jumpToLatest}
+          </button>
         ) : null}
       </div>
 
-      <div className="border-t">
+      <div className="border-t pb-[env(safe-area-inset-bottom)]">
         {last?.suggestions && last.suggestions.length > 0 && !pending ? (
           <div className="flex flex-wrap gap-2 px-4 pt-3">
             {last.suggestions.map((s) => (
@@ -322,22 +502,31 @@ export function ConciergeWidget({
                   send(input);
                 }
               }}
-              placeholder={configured ? placeholder : "Assistant offline"}
+              placeholder={configured ? boxPlaceholder : text.offlinePlaceholder}
               disabled={!configured || pending}
               maxLength={maxLength}
-              aria-label="Message"
+              aria-label={text.messageLabel}
               className={`${MESSAGE_BOX_HEIGHT} flex-1 resize-none overflow-y-auto bg-transparent py-1.5 text-base leading-6 outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60 sm:text-[0.9375rem]`}
             />
             <button
               type="submit"
-              aria-label="Send"
+              aria-label={text.send}
               disabled={!configured || pending || !input.trim()}
               className="grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground transition hover:opacity-90 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40"
             >
               <SendIcon />
             </button>
           </div>
-          <p className="mt-1.5 hidden px-1 text-[11px] text-muted-foreground sm:block">Enter to send · Shift+Enter for a new line</p>
+          {/* The keyboard hint is meaningless on a phone; what we store is not. */}
+          <p className={`mt-1.5 px-1 text-[11px] text-muted-foreground ${privacyNote ? "" : "hidden sm:block"}`}>
+            <span className={privacyNote ? "hidden sm:inline" : undefined}>{text.inputHint}</span>
+            {privacyNote ? (
+              <>
+                <span aria-hidden className="hidden sm:inline"> · </span>
+                <span>{privacyNote}</span>
+              </>
+            ) : null}
+          </p>
         </form>
       </div>
     </section>
@@ -386,6 +575,11 @@ const NewChatIcon = () => (
 const SendIcon = () => (
   <Icon>
     <path d="M12 19V5M5 12l7-7 7 7" />
+  </Icon>
+);
+const DownIcon = () => (
+  <Icon className="size-3.5">
+    <path d="M12 5v14M5 12l7 7 7-7" />
   </Icon>
 );
 const ChevronIcon = () => (

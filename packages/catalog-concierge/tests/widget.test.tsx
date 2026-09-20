@@ -3,7 +3,7 @@
  * actually touch, so it is tested the way they use it: open it, type, tap.
  */
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProductCard } from "../src/types";
 import { ConciergeWidget, type ConciergeWidgetProps, type WidgetSendResult } from "../src/ui/widget";
 
@@ -31,11 +31,11 @@ async function sendAndWait(text: string) {
 describe("ConciergeWidget — opening and closing", () => {
   it("starts as a launcher and opens into a labelled panel with the greeting, starter chips and the cursor in the box", () => {
     renderWidget();
-    expect(screen.queryByRole("region", { name: "Fit Assistant" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Fit Assistant" })).toBeNull();
 
     openWidget();
 
-    expect(screen.getByRole("region", { name: "Fit Assistant" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Fit Assistant" })).toBeTruthy();
     expect(screen.getByText("Hi! Ask me anything.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Help me choose" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Ask Fit Assistant" })).toBeNull();
@@ -46,12 +46,12 @@ describe("ConciergeWidget — opening and closing", () => {
     renderWidget();
     openWidget();
     fireEvent.click(screen.getByRole("button", { name: "Close chat" }));
-    expect(screen.queryByRole("region", { name: "Fit Assistant" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Fit Assistant" })).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Ask Fit Assistant" }));
 
     openWidget();
     fireEvent.keyDown(messageBox(), { key: "Escape" });
-    expect(screen.queryByRole("region", { name: "Fit Assistant" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Fit Assistant" })).toBeNull();
   });
 
   it("announces replies to screen readers", () => {
@@ -292,5 +292,217 @@ describe("ConciergeWidget — new chat", () => {
 
     await screen.findByRole("button", { name: "Help me choose" });
     expect(screen.queryByText("first question")).toBeNull();
+  });
+});
+
+/**
+ * A phone-sized screen, faked. jsdom has no layout, so the widget's own media
+ * query is the only thing that can tell it the panel is covering the page.
+ */
+function stubScreen({ phone, keyboardLeaves }: { phone: boolean; keyboardLeaves?: number }) {
+  const mediaQuery = { matches: phone, media: "(max-width: 639px)", addEventListener: vi.fn(), removeEventListener: vi.fn() };
+  Object.defineProperty(window, "matchMedia", { configurable: true, writable: true, value: () => mediaQuery });
+  if (keyboardLeaves !== undefined) {
+    Object.defineProperty(window, "visualViewport", { configurable: true, writable: true, value: { height: keyboardLeaves, addEventListener: vi.fn(), removeEventListener: vi.fn() } });
+  }
+  return mediaQuery;
+}
+
+afterEach(() => {
+  Reflect.deleteProperty(window, "matchMedia");
+  Reflect.deleteProperty(window, "visualViewport");
+});
+
+const panel = () => screen.getByRole("dialog", { name: "Fit Assistant" });
+
+describe("ConciergeWidget — speaking the store's language", () => {
+  it("says everything in the labels it is given", () => {
+    renderWidget({
+      labels: {
+        launcher: "Tanya {name}",
+        subtitle: "Jawapan daripada spesifikasi produk kedai ini",
+        close: "Tutup sembang",
+        messageLabel: "Mesej",
+        send: "Hantar",
+        placeholder: "Tanya tentang mana-mana produk…",
+        inputHint: "Enter untuk hantar",
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Tanya Fit Assistant" }));
+
+    expect(screen.getByText("Jawapan daripada spesifikasi produk kedai ini")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Tutup sembang" })).toBeTruthy();
+    expect((screen.getByLabelText("Mesej") as HTMLTextAreaElement).placeholder).toBe("Tanya tentang mana-mana produk…");
+    expect(screen.getByRole("button", { name: "Hantar" })).toBeTruthy();
+    expect(screen.getByText("Enter untuk hantar")).toBeTruthy();
+  });
+
+  it("keeps the English default for every label the host leaves out", () => {
+    renderWidget({ labels: { send: "Hantar" } });
+    openWidget();
+
+    expect(screen.getByRole("button", { name: "Hantar" })).toBeTruthy();
+    expect(screen.getByText("Answers from the product specs in this store")).toBeTruthy();
+    expect(messageBox().placeholder).toBe("Ask about any product…");
+  });
+
+  it("translates the offline state, the typing line and the retry chip too", async () => {
+    const labels = { thinking: "Sedang menyemak katalog…", retry: "Cuba lagi" };
+    const onSend = vi.fn<ConciergeWidgetProps["onSend"]>(async () => ({ ok: false, error: "Ada masalah." }));
+    renderWidget({ labels, onSend });
+    openWidget();
+    type("paddle");
+    fireEvent.click(sendButton());
+
+    expect(await screen.findByRole("button", { name: "Cuba lagi" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+});
+
+describe("ConciergeWidget — telling customers what happens to their messages", () => {
+  it("shows the host's privacy line under the box, on every screen size", () => {
+    renderWidget({ privacyNote: "Chats are saved to improve this store's answers." });
+    openWidget();
+
+    const line = screen.getByText("Chats are saved to improve this store's answers.");
+    expect(line.closest("p")!.className).not.toContain("hidden");
+    // The keyboard hint is the part that only makes sense with a keyboard.
+    expect(screen.getByText("Enter to send · Shift+Enter for a new line").className).toContain("hidden sm:inline");
+  });
+
+  it("claims nothing about storage when the host gives no line", () => {
+    renderWidget();
+    openWidget();
+
+    expect(screen.queryByText(/saved/i)).toBeNull();
+    expect(screen.getByText("Enter to send · Shift+Enter for a new line").closest("p")!.className).toContain("hidden sm:block");
+  });
+});
+
+describe("ConciergeWidget — keyboard shortcut", () => {
+  it("opens with Ctrl+Shift+K and closes with ⌘+Shift+K", () => {
+    renderWidget();
+
+    fireEvent.keyDown(document, { key: "K", ctrlKey: true, shiftKey: true });
+    expect(panel()).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "k", metaKey: true, shiftKey: true });
+    expect(screen.queryByRole("dialog", { name: "Fit Assistant" })).toBeNull();
+  });
+
+  it("needs both modifiers, so typing the letter never opens it", () => {
+    renderWidget();
+
+    fireEvent.keyDown(document, { key: "k" });
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    fireEvent.keyDown(document, { key: "k", shiftKey: true });
+
+    expect(screen.queryByRole("dialog", { name: "Fit Assistant" })).toBeNull();
+  });
+
+  it("takes the host's letter, and can be turned off entirely", () => {
+    renderWidget({ shortcutKey: "j" });
+    fireEvent.keyDown(document, { key: "j", ctrlKey: true, shiftKey: true });
+    expect(panel()).toBeTruthy();
+  });
+
+  it("binds nothing when the host passes null", () => {
+    renderWidget({ shortcutKey: null });
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true, shiftKey: true });
+    expect(screen.queryByRole("dialog", { name: "Fit Assistant" })).toBeNull();
+  });
+});
+
+describe("ConciergeWidget — on a phone", () => {
+  it("is a modal dialog and keeps Tab inside itself", () => {
+    stubScreen({ phone: true });
+    renderWidget();
+    openWidget();
+
+    expect(panel().getAttribute("aria-modal")).toBe("true");
+
+    // Last stop forward is the box (Send is disabled while it is empty).
+    expect(document.activeElement).toBe(messageBox());
+    fireEvent.keyDown(messageBox(), { key: "Tab" });
+    const close = screen.getByRole("button", { name: "Close chat" });
+    expect(document.activeElement).toBe(close);
+
+    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(messageBox());
+  });
+
+  it("shrinks to the space the on-screen keyboard leaves visible", () => {
+    stubScreen({ phone: true, keyboardLeaves: 420 });
+    renderWidget();
+    openWidget();
+
+    expect(panel().style.height).toBe("420px");
+  });
+
+  it("stays a plain panel on a larger screen: no modal, no focus trap, no forced height", () => {
+    stubScreen({ phone: false, keyboardLeaves: 420 });
+    renderWidget();
+    openWidget();
+
+    expect(panel().getAttribute("aria-modal")).toBeNull();
+    expect(panel().style.height).toBe("");
+    fireEvent.keyDown(messageBox(), { key: "Tab" });
+    expect(document.activeElement).toBe(messageBox());
+  });
+});
+
+describe("ConciergeWidget — reading back through the conversation", () => {
+  /** jsdom has no layout: give the transcript the shape of a scrolled list. */
+  function scrollList(list: HTMLElement, { from }: { from: number }) {
+    Object.defineProperty(list, "scrollHeight", { configurable: true, get: () => 1000 });
+    Object.defineProperty(list, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(list, "scrollTop", { configurable: true, get: () => 1000 - 400 - from });
+    fireEvent.scroll(list);
+  }
+
+  it("offers a jump back to the latest, and hides it again once there", async () => {
+    renderWidget();
+    openWidget();
+    const list = screen.getByRole("log");
+    const scrollTo = vi.spyOn(list, "scrollTo").mockImplementation(() => {});
+
+    scrollList(list, { from: 300 });
+    const jump = await screen.findByRole("button", { name: /Jump to latest/ });
+
+    fireEvent.click(jump);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: "smooth" });
+    expect(screen.queryByRole("button", { name: /Jump to latest/ })).toBeNull();
+  });
+
+  it("does not drag the customer back down when a reply lands while they are reading", async () => {
+    let resolveReply!: (r: WidgetSendResult) => void;
+    const onSend = vi.fn<ConciergeWidgetProps["onSend"]>(() => new Promise<WidgetSendResult>((r) => (resolveReply = r)));
+    renderWidget({ onSend });
+    openWidget();
+    type("which paddle?");
+    fireEvent.click(sendButton());
+
+    const list = screen.getByRole("log");
+    const scrollTo = vi.spyOn(list, "scrollTo").mockImplementation(() => {});
+    scrollList(list, { from: 300 });
+
+    resolveReply(replied);
+    await screen.findByText("Here are two options.");
+
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /Jump to latest/ })).toBeTruthy();
+  });
+
+  it("follows the conversation down again as soon as the customer sends something", async () => {
+    renderWidget();
+    openWidget();
+    const list = screen.getByRole("log");
+    vi.spyOn(list, "scrollTo").mockImplementation(() => {});
+    scrollList(list, { from: 300 });
+    expect(screen.getByRole("button", { name: /Jump to latest/ })).toBeTruthy();
+
+    await sendAndWait("show me paddles");
+    expect(screen.queryByRole("button", { name: /Jump to latest/ })).toBeNull();
   });
 });

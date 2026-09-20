@@ -166,9 +166,9 @@ describe("starter suggestions always pass the guard", () => {
       "Help me choose",
       "Show me paddles",
       "Show me balls",
-      "What's on sale or in stock?",
+      "What's in stock?",
     ]);
-    expect(buildStarterSuggestions([])).toEqual(["Help me choose", "What's on sale or in stock?"]);
+    expect(buildStarterSuggestions([])).toEqual(["Help me choose", "What's in stock?"]);
   });
 });
 

@@ -149,11 +149,23 @@ export async function askAssistantAction(raw: { message: string; history?: Conve
 
     return { ok: true, answer: reply.answer, suggestions: reply.suggestions, products: reply.products };
   } catch (err) {
+    // The detail — which provider, which model, whose key — belongs in the
+    // store owner's logs, not on a customer's screen.
     console.error("[assistant] failed", err);
-    if (err instanceof OpenAI.AuthenticationError) return { ok: false, error: "The assistant's DeepSeek API key is invalid. The store owner needs to check the configuration." };
-    if (err instanceof OpenAI.PermissionDeniedError) return { ok: false, error: "The assistant's DeepSeek account doesn't have access to this model. The store owner needs to check their DeepSeek account." };
-    if (err instanceof OpenAI.RateLimitError) return { ok: false, error: "The assistant is busy right now — please try again in a moment." };
-    if (err instanceof OpenAI.APIError) return { ok: false, error: "The assistant couldn't reach its model. Please try again shortly." };
-    return { ok: false, error: "Something went wrong while answering. Please try again." };
+    return { ok: false, error: customerFacingError(err) };
   }
+}
+
+/**
+ * What a customer is told when a turn fails.
+ *
+ * Only two things matter to them: whether waiting will help, and that the shop
+ * is otherwise fine. Naming the model vendor, or telling a shopper that the
+ * owner has misconfigured something, does neither — it just makes the store
+ * look broken by someone who isn't there.
+ */
+function customerFacingError(err: unknown): string {
+  if (err instanceof OpenAI.RateLimitError) return "The assistant is busy right now — please try again in a moment.";
+  if (err instanceof OpenAI.APIError) return "The assistant is unavailable right now. Please try again shortly, or browse the store as usual.";
+  return "Something went wrong while answering. Please try again.";
 }
