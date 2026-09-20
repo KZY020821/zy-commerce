@@ -2,7 +2,7 @@
  * The storefront chrome every visitor sees. The demo notice in particular is
  * a legal safeguard, so its presence is asserted rather than assumed.
  */
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/app/[tenant]/(storefront)/assistant/actions", () => ({ askAssistantAction: vi.fn(), startNewChatAction: vi.fn() }));
@@ -115,6 +115,9 @@ describe("StorefrontAssistant", () => {
     fireEvent.change(screen.getByLabelText("Message"), { target: { value: "hi" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByText("Try the Atlas.");
+    // The answer appears one commit before the transition that loaded it ends,
+    // and New chat is deliberately inert while a reply is still in flight.
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
 
     fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
 

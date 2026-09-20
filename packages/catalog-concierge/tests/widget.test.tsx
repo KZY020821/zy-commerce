@@ -2,7 +2,7 @@
  * The drop-in widget, rendered in jsdom. This is the part a client's customers
  * actually touch, so it is tested the way they use it: open it, type, tap.
  */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProductCard } from "../src/types";
 import { ConciergeWidget, type ConciergeWidgetProps, type WidgetSendResult } from "../src/ui/widget";
@@ -26,6 +26,10 @@ async function sendAndWait(text: string) {
   type(text);
   fireEvent.click(sendButton());
   await screen.findByText("Here are two options.");
+  // The reply is painted one commit before the transition that loaded it ends.
+  // Anything the widget holds back while a reply is in flight — New chat, the
+  // chips — needs that second commit, so wait for the typing dots to go.
+  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
 }
 
 describe("ConciergeWidget — opening and closing", () => {
