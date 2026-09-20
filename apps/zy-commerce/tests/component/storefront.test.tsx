@@ -128,6 +128,26 @@ describe("StorefrontAssistant", () => {
     expect(screen.getByText("Earlier in this chat")).toBeTruthy();
   });
 
+  it("renders the assistant's product cards as client-side links, and a card with no page as a dead end", async () => {
+    vi.mocked(askAssistantAction).mockResolvedValue({
+      ok: true,
+      answer: "Two options.",
+      suggestions: [],
+      products: [
+        { ref: "PAD-1", name: "Atlas", url: "/products/atlas", imageUrl: null, price: 22090, priceFrom: false, priceLabel: "RM 220.90", stockLabel: "In stock" },
+        { ref: "PAD-2", name: "Vanguard", url: null, imageUrl: null, price: 44590, priceFrom: true, priceLabel: "RM 445.90", stockLabel: "Sold out" },
+      ],
+    });
+    render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "paddles?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Two options.");
+
+    expect(screen.getByRole("link", { name: /Atlas/ }).getAttribute("href")).toBe("/products/atlas");
+    expect(screen.getByRole("link", { name: /Vanguard/ }).getAttribute("href")).toBe("#");
+  });
+
   it("tells customers their chat is kept, because this store keeps it", () => {
     render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
     fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
