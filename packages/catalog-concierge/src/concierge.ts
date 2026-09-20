@@ -11,7 +11,7 @@
  * Everything above this line is host territory: authentication, tenancy,
  * rate limiting, logging. Everything below it is the assistant.
  */
-import { runAssistant, type AssistantReply, type MessagesClient } from "./assistant";
+import { drain, runAssistantEvents, type AssistantEvent, type AssistantReply, type MessagesClient } from "./assistant";
 import { toProductCard } from "./format";
 import { buildStoreVocabulary, classifyMessage, isQuestion, OFF_TOPIC_REPLY } from "./guard";
 import { getModelClient } from "./model";
@@ -57,7 +57,17 @@ export class ConciergeNotConfiguredError extends Error {
   }
 }
 
-export async function askConcierge(options: ConciergeOptions, input: AskInput): Promise<ConciergeReply> {
+/**
+ * What the assistant is doing, reported while the customer waits.
+ *
+ * One event per tool call, in the order they happen: the host can say
+ * "searching the catalogue" and then "comparing two paddles" instead of
+ * showing three dots for eight seconds.
+ */
+export type ConciergeEvent = AssistantEvent;
+
+/** The whole turn, with its progress. Ends by returning the finished reply. */
+export async function* askConciergeStream(options: ConciergeOptions, input: AskInput): AsyncGenerator<ConciergeEvent, ConciergeReply> {
   const resolved = options.model ?? (() => {
     const m = getModelClient();
     return m ? { client: m.client as MessagesClient, modelId: m.model } : null;
@@ -98,7 +108,7 @@ export async function askConcierge(options: ConciergeOptions, input: AskInput): 
     }
   }
 
-  const reply = await runAssistant({
+  const reply = yield* runAssistantEvents({
     client: resolved.client,
     model: resolved.modelId,
     store: { ...options.store, profile },
@@ -124,6 +134,15 @@ export async function askConcierge(options: ConciergeOptions, input: AskInput): 
     origin: { kind: "model", toolCalls: reply.toolCalls.map((t) => t.name) },
     usage: reply.usage ? { inputTokens: reply.usage.inputTokens, outputTokens: reply.usage.outputTokens, cachedInputTokens: reply.usage.cacheReadInputTokens } : undefined,
   };
+}
+
+/**
+ * The same turn for a host that only wants the answer. It is the streaming
+ * version drained to its end, so there is one implementation of the turn and
+ * a host choosing progress reporting can never get different behaviour.
+ */
+export async function askConcierge(options: ConciergeOptions, input: AskInput): Promise<ConciergeReply> {
+  return drain(askConciergeStream(options, input));
 }
 
 /** The last path segment of a product URL, e.g. "/products/atlas" -> "atlas". */

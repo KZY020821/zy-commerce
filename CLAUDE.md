@@ -42,7 +42,7 @@ Integration tests need the Docker database (`pnpm db:up`). Unit tests do not.
 
 ## Conventions
 
-- Next.js 16: `proxy.ts` (not middleware), async `params`/`headers()`, Server Actions for mutations, Route Handlers only for webhooks and Auth.js.
+- Next.js 16: `proxy.ts` (not middleware), async `params`/`headers()`, Server Actions for mutations, Route Handlers only for webhooks, Auth.js and the assistant's streaming endpoint (`/api/assistant`, decision 101).
 - Prisma 7: schema in `prisma/schema.prisma`, config in `prisma.config.ts`, generated client in `src/generated/prisma` (git-ignored; `pnpm db:generate`).
 - shadcn/ui components live in `src/components/ui`; add more with `pnpm dlx shadcn@latest add <name>`.
 - Tenant storefront links are root-relative (`/products/x`); the proxy adds the slug internally.

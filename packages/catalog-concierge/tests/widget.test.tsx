@@ -5,7 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProductCard } from "../src/types";
-import { ConciergeWidget, type ConciergeWidgetProps, type WidgetSendResult } from "../src/ui/widget";
+import { ConciergeWidget, type ConciergeWidgetProps, type WidgetSendResult, type WidgetStreamEvent } from "../src/ui/widget";
 
 const card: ProductCard = { ref: "PAD-1", name: "Atlas Control Paddle", url: "/products/atlas", imageUrl: "https://img.test/atlas.png", price: 22090, priceFrom: true, priceLabel: "RM 220.90", stockLabel: "Low stock" };
 
@@ -665,5 +665,87 @@ describe("ConciergeWidget — what the customer thought of the answer", () => {
     expect(await screen.findByText("The Atlas.")).toBeTruthy();
     expect(screen.getByText("Thanks — this helps the shop improve.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "This answer helped" })).toBeNull();
+  });
+});
+
+describe("ConciergeWidget — saying what it is doing", () => {
+  /** A host that reports progress, one event at a time, on demand. */
+  function scriptedStream(events: WidgetStreamEvent[]) {
+    const released: Array<() => void> = [];
+    const stream = async function* () {
+      for (const event of events) {
+        await new Promise<void>((resolve) => released.push(resolve));
+        yield event;
+      }
+    };
+    return { stream: vi.fn(() => stream()), next: async () => { released.shift()?.(); await Promise.resolve(); } };
+  }
+
+  it("shows what the assistant is doing, in order, then the answer", async () => {
+    const { stream, next } = scriptedStream([
+      { kind: "tool", name: "search_products" },
+      { kind: "tool", name: "compare_products" },
+      { kind: "reply", result: replied },
+    ]);
+    renderWidget({ onSendStream: stream });
+    openWidget();
+    type("compare the two paddles");
+    fireEvent.click(sendButton());
+
+    await next();
+    expect((await screen.findByRole("status")).textContent).toContain("Searching the catalogue…");
+    await next();
+    expect((await screen.findByRole("status")).textContent).toContain("Comparing products…");
+
+    await next();
+    expect(await screen.findByText("Here are two options.")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("falls back to the plain transport when the stream breaks before answering", async () => {
+    const onSendStream = vi.fn(async function* (): AsyncGenerator<WidgetStreamEvent> {
+      yield { kind: "tool", name: "search_products" };
+      throw new Error("connection lost");
+    });
+    const { onSend } = renderWidget({ onSendStream });
+    openWidget();
+    await sendAndWait("which paddle?");
+
+    expect(onSendStream).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith({ message: "which paddle?", history: [] });
+    expect(screen.getByText("Here are two options.")).toBeTruthy();
+  });
+
+  it("does not ask twice when the stream answered and then failed", async () => {
+    const onSendStream = vi.fn(async function* (): AsyncGenerator<WidgetStreamEvent> {
+      yield { kind: "reply", result: replied };
+      throw new Error("connection lost after the answer");
+    });
+    const { onSend } = renderWidget({ onSendStream });
+    openWidget();
+    await sendAndWait("which paddle?");
+
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("names an unfamiliar tool in the same words as no tool at all", async () => {
+    const { stream, next } = scriptedStream([{ kind: "tool", name: "consult_the_oracle" }, { kind: "reply", result: replied }]);
+    renderWidget({ onSendStream: stream });
+    openWidget();
+    type("which paddle?");
+    fireEvent.click(sendButton());
+
+    await next();
+    expect((await screen.findByRole("status")).textContent).toContain("Checking the catalogue…");
+
+    await next();
+    await screen.findByText("Here are two options.");
+  });
+
+  it("still uses the plain transport when the host streams nothing", async () => {
+    const { onSend } = renderWidget();
+    openWidget();
+    await sendAndWait("which paddle?");
+    expect(onSend).toHaveBeenCalledTimes(1);
   });
 });

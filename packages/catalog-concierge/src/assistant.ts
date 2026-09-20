@@ -26,6 +26,9 @@ export interface AssistantStoreContext extends StoreProfile {
 
 export type { ConversationTurn as AssistantTurn } from "./types";
 
+/** Something the assistant did, reported while the customer waits. */
+export type AssistantEvent = { kind: "tool"; name: string };
+
 export interface AssistantReply {
   answer: string;
   suggestions: string[];
@@ -148,7 +151,15 @@ function safeParseArgs(raw: string): Record<string, unknown> {
   }
 }
 
-export async function runAssistant(opts: RunOptions): Promise<AssistantReply> {
+/**
+ * The tool loop, reported as it happens.
+ *
+ * Yields one event per tool call, in the order the model makes them, and
+ * returns the finished reply. A turn takes several seconds and spends most of
+ * them inside this loop, so this is the only place that knows what the
+ * assistant is actually doing while a customer waits.
+ */
+export async function* runAssistantEvents(opts: RunOptions): AsyncGenerator<AssistantEvent, AssistantReply> {
   const system = buildSystemPrompt(opts.store, opts.viewing);
   const history = trimHistory(opts.history).map<OpenAI.Chat.Completions.ChatCompletionMessageParam>((t) => ({ role: t.role, content: t.content }));
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [{ role: "system", content: system }, ...history, { role: "user", content: opts.userMessage }];
@@ -196,6 +207,8 @@ export async function runAssistant(opts: RunOptions): Promise<AssistantReply> {
     for (const call of calls) {
       const parsedInput = safeParseArgs(call.function.arguments);
       toolCalls.push({ name: call.function.name, input: parsedInput });
+      // Said before the work, not after: this is what the customer is waiting on.
+      yield { kind: "tool", name: call.function.name };
       let content: string;
       try {
         content = await runAssistantTool(call.function.name, parsedInput, opts.tools);
@@ -207,4 +220,16 @@ export async function runAssistant(opts: RunOptions): Promise<AssistantReply> {
   }
 
   return { answer: "I looked into that but couldn't put together a confident answer. Could you rephrase or narrow it down?", suggestions: ["Show me popular products", "Start over"], productRefs: [], toolCalls, usage };
+}
+
+/** The loop with nobody watching: runs it to the end and hands back the reply. */
+export async function runAssistant(opts: RunOptions): Promise<AssistantReply> {
+  return drain(runAssistantEvents(opts));
+}
+
+/** Runs an event generator to completion and returns what it returned. */
+export async function drain<T, R>(generator: AsyncGenerator<T, R>): Promise<R> {
+  let step = await generator.next();
+  while (!step.done) step = await generator.next();
+  return step.value;
 }

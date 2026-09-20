@@ -129,6 +129,24 @@ Pair it with `handoff`, a way to reach a person, which the widget shows under th
 <ConciergeWidget handoff={{ label: "Message us on WhatsApp", href: "https://wa.me/60123456789" }} … />
 ```
 
+### Saying what it is doing
+
+A turn takes several seconds, nearly all of it inside the tool loop, and three silent dots make that feel broken. `askConciergeStream` is the same turn with its progress reported: it yields one event per tool call and returns the finished reply.
+
+```ts
+const turn = askConciergeStream({ store, adapter }, { message, history });
+let step = await turn.next();
+while (!step.done) {
+  send({ type: "status", tool: step.value.name }); // search_products, compare_products…
+  step = await turn.next();
+}
+const reply = step.value;
+```
+
+`askConcierge` is this drained to its end, so there is one implementation of a turn and choosing progress reporting cannot change the answer.
+
+On the widget side, `onSendStream` takes over from `onSend` when you pass it, and the customer sees "Searching the catalogue…" then "Comparing products…" instead of dots. If the stream fails before a reply arrives, the widget falls back to `onSend` — a dropped connection should not cost someone their question. The reference app streams NDJSON from a Route Handler; see [`src/app/api/assistant/route.ts`](../../apps/zy-commerce/src/app/api/assistant/route.ts).
+
 ### Finding out whether it actually helped
 
 Pass `onFeedback` and every answer carries two small buttons. Nothing is shown without it.

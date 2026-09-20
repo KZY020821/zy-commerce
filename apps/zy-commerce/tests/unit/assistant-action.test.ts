@@ -424,6 +424,23 @@ describe("rateAnswerAction — what the customer thought of an answer", () => {
     expect(jar.set).not.toHaveBeenCalled();
   });
 
+  it("does nothing for a store that has switched the assistant off", async () => {
+    vi.mocked(requireCurrentTenant).mockResolvedValueOnce({ ...tenant, assistantEnabled: false } as never);
+
+    await rateAnswerAction({ answer: "The Atlas.", rating: "up" });
+
+    expect(getTenantDb).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when this browser has no thread stored", async () => {
+    db = threadStore(null);
+    vi.mocked(getTenantDb).mockResolvedValue(db as never);
+
+    await rateAnswerAction({ answer: "The Atlas.", rating: "up" });
+
+    expect(db.chatConversation.update).not.toHaveBeenCalled();
+  });
+
   it("stops one session from voting over and over", async () => {
     for (let i = 0; i < 60; i++) await rateAnswerAction({ answer: "The Atlas.", rating: "up" });
     db.chatConversation.update.mockClear();

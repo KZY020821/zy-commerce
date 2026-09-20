@@ -107,6 +107,79 @@ describe("StorefrontAssistant", () => {
     expect(screen.getByText(/not connected to a model yet/)).toBeTruthy();
   });
 
+  /** The streaming route, answering in lines, the way the browser reads it. */
+  function streamOf(lines: string[], init: ResponseInit = {}) {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const line of lines) controller.enqueue(encoder.encode(line));
+        controller.close();
+      },
+    });
+    return new Response(body, { status: 200, ...init });
+  }
+
+  it("reads the streaming route and shows what the assistant is doing before the answer", async () => {
+    const fetchMock = vi.fn(async () =>
+      streamOf([
+        '{"type":"status","tool":"search_products"}\n',
+        // A line split across chunks, which is what a real stream does.
+        '{"type":"reply","result":{"ok":true,"answer":"Try the At',
+        'las.","suggestions":[],"products":[]}}\n',
+      ]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "which paddle?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Try the Atlas.")).toBeTruthy();
+    expect(askAssistantAction).not.toHaveBeenCalled();
+    const [url, request] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+    expect(url).toBe("/api/assistant");
+    expect(JSON.parse(String(request.body))).toEqual({ message: "which paddle?", path: "/products/slk-atlas-max" });
+    vi.unstubAllGlobals();
+  });
+
+  it("falls back to the Server Action when the stream cannot answer", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 500 })));
+    vi.mocked(askAssistantAction).mockResolvedValue({ ok: true, answer: "Try the Atlas.", suggestions: [], products: [] });
+    render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "which paddle?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Try the Atlas.")).toBeTruthy();
+    expect(askAssistantAction).toHaveBeenCalledWith({ message: "which paddle?", history: [], path: "/products/slk-atlas-max" });
+    vi.unstubAllGlobals();
+  });
+
+  it("ignores a line of the stream it does not understand", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => streamOf(["not json\n", "123\n", '{"type":"who knows"}\n', "\n", '{"type":"reply","result":{"ok":false,"error":"The assistant is busy."}}\n'])));
+    render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "which paddle?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("The assistant is busy.")).toBeTruthy();
+    expect(askAssistantAction).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("asks again through the Server Action when the stream ends without answering", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => streamOf(['{"type":"status","tool":"search_products"}\n'])));
+    vi.mocked(askAssistantAction).mockResolvedValue({ ok: true, answer: "Try the Atlas.", suggestions: [], products: [] });
+    render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "which paddle?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Try the Atlas.")).toBeTruthy();
+    expect(askAssistantAction).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
   it("sends the page the question was asked from, so the assistant knows what \"this one\" is", async () => {
     vi.mocked(askAssistantAction).mockResolvedValue({ ok: true, answer: "It suits beginners.", suggestions: [], products: [] });
     render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);

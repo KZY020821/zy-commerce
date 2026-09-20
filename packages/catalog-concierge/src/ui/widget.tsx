@@ -23,6 +23,12 @@ export type WidgetSendResult =
 
 export type { RestoredMessage };
 
+/**
+ * What a streaming host reports while a reply is being put together: the
+ * tools the assistant is using, then the finished reply.
+ */
+export type WidgetStreamEvent = { kind: "tool"; name: string } | { kind: "reply"; result: WidgetSendResult };
+
 /** Every fixed string the widget shows. Override any subset through `labels`. */
 export interface WidgetLabels {
   /** Launcher button. `{name}` is replaced with the assistant's name. */
@@ -37,8 +43,13 @@ export interface WidgetLabels {
   placeholder: string;
   offlinePlaceholder: string;
   offlineNotice: string;
-  /** Read out while a reply is being prepared. */
+  /** Shown while a reply is being prepared, and read out to screen readers. */
   thinking: string;
+  /** What it is doing right now, when the host reports its progress. */
+  workingCategories: string;
+  workingSearch: string;
+  workingProduct: string;
+  workingCompare: string;
   /** Keyboard help under the box. Desktop only — it mentions Enter. */
   inputHint: string;
   newChatFailed: string;
@@ -70,6 +81,10 @@ export const DEFAULT_WIDGET_LABELS: WidgetLabels = {
   offlinePlaceholder: "Assistant offline",
   offlineNotice: "The assistant is not connected to a model yet. Once a model key is configured it will answer questions from the product catalogue.",
   thinking: "Checking the catalogue…",
+  workingCategories: "Looking at what this store sells…",
+  workingSearch: "Searching the catalogue…",
+  workingProduct: "Reading the product details…",
+  workingCompare: "Comparing products…",
   inputHint: "Enter to send · Shift+Enter for a new line",
   newChatFailed: "Couldn't start a new chat. Please try again.",
   jumpToLatest: "Jump to latest",
@@ -95,6 +110,16 @@ export interface ConciergeWidgetProps {
    * Action wrapping `askConcierge`.
    */
   onSend: (input: { message: string; history: ConversationTurn[] }) => Promise<WidgetSendResult>;
+  /**
+   * Sends a message and reports progress until the reply lands.
+   *
+   * Preferred over `onSend` when given: a turn takes several seconds, and
+   * saying what the assistant is doing — searching, comparing — is the
+   * difference between waiting and wondering whether it is broken. If the
+   * stream fails before a reply arrives, `onSend` is used instead, so a
+   * customer never loses a question to a dropped connection.
+   */
+  onSendStream?: (input: { message: string; history: ConversationTurn[] }) => AsyncIterable<WidgetStreamEvent>;
   /**
    * Runs when the customer starts a new chat, before the screen clears. A host
    * that keeps the conversation on its own side, as the README advises, uses it
@@ -175,6 +200,14 @@ const STICKY_SLACK_PX = 48;
 
 const FOCUSABLE = 'button:not([disabled]), textarea:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
 
+/** The assistant's tools, in the customer's words. */
+const WORKING: Record<string, keyof WidgetLabels> = {
+  list_categories: "workingCategories",
+  search_products: "workingSearch",
+  get_product: "workingProduct",
+  compare_products: "workingCompare",
+};
+
 const STOCK_BADGE: Record<StockLabel, string> = {
   "In stock": "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
   "Low stock": "bg-amber-500/15 text-amber-800 dark:text-amber-300",
@@ -186,6 +219,7 @@ export function ConciergeWidget({
   greeting,
   starterSuggestions = [],
   onSend,
+  onSendStream,
   onNewChat,
   loadHistory,
   onFeedback,
@@ -208,6 +242,8 @@ export function ConciergeWidget({
   const [notice, setNotice] = useState<string | null>(null);
   const [scrolledAway, setScrolledAway] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  /** The tool the assistant is using right now, when the host reports it. */
+  const [working, setWorking] = useState<string | null>(null);
   const [fullScreen, setFullScreen] = useState(false);
   /** Height of the part of the screen the browser is actually showing. */
   const [visibleHeight, setVisibleHeight] = useState<number | null>(null);
@@ -350,7 +386,8 @@ export function ConciergeWidget({
     stickToBottom.current = true;
     if (scrolledAway) setScrolledAway(false);
     startTransition(async () => {
-      const result = await onSend({ message, history });
+      const result = await answer({ message, history });
+      setWorking(null);
       setMessages((prev) =>
         result.ok
           ? [...prev, { role: "assistant", content: result.answer, suggestions: result.suggestions, products: result.products }]
@@ -370,6 +407,28 @@ export function ConciergeWidget({
     if (!message || message.rating) return;
     setMessages((prev) => prev.map((m, i) => (i === index ? { ...m, rating } : m)));
     void Promise.resolve(onFeedback?.({ answer: message.content, rating })).catch(() => {});
+  }
+
+  /**
+   * The reply, through the streaming host if there is one.
+   *
+   * A stream that fails before delivering anything falls back to `onSend`:
+   * the customer waited for this answer, and a dropped connection is not a
+   * reason to make them ask again.
+   */
+  async function answer(input: { message: string; history: ConversationTurn[] }): Promise<WidgetSendResult> {
+    if (onSendStream) {
+      try {
+        for await (const event of onSendStream(input)) {
+          if (event.kind === "reply") return event.result;
+          setWorking(event.name);
+        }
+      } catch {
+        // Falls through to the plain transport below.
+      }
+      setWorking(null);
+    }
+    return onSend(input);
   }
 
   /** Sends the failed question again in place of the failed exchange, so it isn't shown twice. */
@@ -561,11 +620,15 @@ export function ConciergeWidget({
 
           {pending ? (
             <div className="flex justify-start">
-              <div role="status" className="flex items-center gap-1 rounded-2xl rounded-bl-md bg-muted px-4 py-3.5">
-                <span className="sr-only">{text.thinking}</span>
-                {[0, 160, 320].map((delay) => (
-                  <span key={delay} aria-hidden className="size-1.5 rounded-full bg-muted-foreground/60 motion-safe:animate-bounce" style={{ animationDelay: `${delay}ms` }} />
-                ))}
+              <div role="status" className="flex items-center gap-2 rounded-2xl rounded-bl-md bg-muted px-4 py-3">
+                <span className="flex items-center gap-1">
+                  {[0, 160, 320].map((delay) => (
+                    <span key={delay} aria-hidden className="size-1.5 rounded-full bg-muted-foreground/60 motion-safe:animate-bounce" style={{ animationDelay: `${delay}ms` }} />
+                  ))}
+                </span>
+                {/* What it is actually doing, when the host says; otherwise
+                    the same line that was only ever read to screen readers. */}
+                <span className={working ? "text-xs text-muted-foreground" : "sr-only"}>{working ? text[WORKING[working] ?? "thinking"] : text.thinking}</span>
               </div>
             </div>
           ) : null}

@@ -7,7 +7,7 @@
 import type OpenAI from "openai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MessagesClient } from "../src/assistant";
-import { askConcierge, ConciergeNotConfiguredError, conciergeStarters } from "../src/concierge";
+import { askConcierge, askConciergeStream, ConciergeNotConfiguredError, conciergeStarters } from "../src/concierge";
 import { formatMoney } from "../src/format";
 import { OFF_TOPIC_REPLY } from "../src/guard";
 import type { CatalogAdapter, CatalogueProduct, ConversationTurn } from "../src/types";
@@ -368,5 +368,53 @@ describe("askConcierge — the product the customer is looking at", () => {
     await askConcierge({ store, adapter: makeAdapter(), model }, { message: "show me paddles", history: [] });
 
     expect(systemPrompt(calls)).not.toContain("The customer is looking at");
+  });
+});
+
+describe("askConciergeStream — saying what it is doing while it does it", () => {
+  /** Drains a stream, keeping every event it reported on the way. */
+  async function collect(stream: AsyncGenerator<{ kind: "tool"; name: string }, Awaited<ReturnType<typeof askConcierge>>>) {
+    const events: string[] = [];
+    let step = await stream.next();
+    while (!step.done) {
+      events.push(step.value.name);
+      step = await stream.next();
+    }
+    return { events, reply: step.value };
+  }
+
+  it("reports each tool call before it runs, in order, and still returns the finished reply", async () => {
+    const { model } = scriptedModel([
+      lookupWith("get_product", { ref: "PAD-1" }),
+      lookupWith("compare_products", { refs: ["PAD-1", "PAD-2"] }),
+      respondWith({ answer: "The Atlas is gentler.", productRefs: ["PAD-1"] }),
+    ]);
+
+    const { events, reply } = await collect(askConciergeStream({ store, adapter: makeAdapter(), model }, { message: "compare the two paddles", history: [] }));
+
+    expect(events).toEqual(["get_product", "compare_products"]);
+    expect(reply.answer).toBe("The Atlas is gentler.");
+    expect(reply.products.map((p) => p.ref)).toEqual(["PAD-1"]);
+  });
+
+  it("reports nothing at all for a message the guard turns away", async () => {
+    const { model, calls } = scriptedModel([]);
+
+    const { events, reply } = await collect(askConciergeStream({ store, adapter: makeAdapter(), model }, { message: "what's the weather like today?", history: [] }));
+
+    expect(events).toEqual([]);
+    expect(reply.answer).toBe(OFF_TOPIC_REPLY);
+    expect(calls).toHaveLength(0);
+  });
+
+  // One turn, one implementation: the non-streaming call is this one drained.
+  it("gives exactly what askConcierge gives", async () => {
+    const withStream = scriptedModel([lookupWith("get_product", { ref: "PAD-1" }), respondWith({ answer: "The Atlas.", productRefs: ["PAD-1"] })]);
+    const withoutStream = scriptedModel([lookupWith("get_product", { ref: "PAD-1" }), respondWith({ answer: "The Atlas.", productRefs: ["PAD-1"] })]);
+
+    const streamed = await collect(askConciergeStream({ store, adapter: makeAdapter(), model: withStream.model }, { message: "tell me about the atlas", history: [] }));
+    const plain = await askConcierge({ store, adapter: makeAdapter(), model: withoutStream.model }, { message: "tell me about the atlas", history: [] });
+
+    expect(streamed.reply).toEqual(plain);
   });
 });
