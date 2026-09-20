@@ -22,6 +22,7 @@ import { isValidTenantSlug, platformOrigin, tenantOrigin } from "../src/lib/tena
 import selkirkJson from "./seed-data/selkirk.json" with { type: "json" };
 import nikeJson from "./seed-data/nike.json" with { type: "json" };
 import type { SeedCatalog } from "./seed-data/types";
+import { CHAT_RETENTION_DAYS, purgeOldConversations } from "../src/lib/ai/retention";
 
 /**
  * Demo tenants. Each is a fully independent store: its own catalogue,
@@ -274,6 +275,11 @@ async function seedDemoCatalog(tenantId: string, previousFingerprint: string | n
 async function main() {
   await seedSuperAdmin();
   for (const store of DEMO_STORES) await seedDemoStore(store);
+
+  // The widget tells customers their chat is kept for a while, not for ever.
+  // Every production deploy re-runs this seed, so this is where "a while" ends.
+  const purged = await purgeOldConversations(db);
+  if (purged > 0) console.log(`✓ Removed ${purged} conversation(s) older than ${CHAT_RETENTION_DAYS} days`);
 
   console.log("\nURLs");
   console.log(`  Platform admin : ${platformOrigin()}/platform/login`);

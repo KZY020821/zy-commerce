@@ -10,14 +10,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ConciergeWidget } from "catalog-concierge/react";
-import { askAssistantAction, loadChatHistoryAction, startNewChatAction } from "@/app/[tenant]/(storefront)/assistant/actions";
+import { askAssistantAction, loadChatHistoryAction, rateAnswerAction, startNewChatAction } from "@/app/[tenant]/(storefront)/assistant/actions";
+import { CHAT_RETENTION_DAYS } from "@/lib/ai/retention";
 
 /**
  * Said plainly, where the customer is about to type. Every message is written
  * to the store's conversation log (`ChatConversation`) and the store's admins
- * can read it, so the widget says so rather than leaving people to guess.
+ * can read it — for as long as the seed's retention pass leaves it there, and
+ * no longer, which is the part worth stating.
  */
-const PRIVACY_NOTE = "Chats are saved so this store can improve its answers.";
+const PRIVACY_NOTE = `Chats are kept for ${CHAT_RETENTION_DAYS} days so this store can improve its answers.`;
 
 export function StorefrontAssistant({
   assistantName,
@@ -47,6 +49,7 @@ export function StorefrontAssistant({
       onSend={(input) => askAssistantAction({ ...input, path: pathname })}
       onNewChat={startNewChatAction}
       loadHistory={loadChatHistoryAction}
+      onFeedback={rateAnswerAction}
       renderProductLink={(product, children) => <Link href={product.url ?? "#"}>{children}</Link>}
     />
   );

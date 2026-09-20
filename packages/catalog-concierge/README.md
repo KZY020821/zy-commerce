@@ -129,6 +129,17 @@ Pair it with `handoff`, a way to reach a person, which the widget shows under th
 <ConciergeWidget handoff={{ label: "Message us on WhatsApp", href: "https://wa.me/60123456789" }} … />
 ```
 
+### Finding out whether it actually helped
+
+Pass `onFeedback` and every answer carries two small buttons. Nothing is shown without it.
+
+```tsx
+<ConciergeWidget onFeedback={rateAnswerAction} … />
+// → { answer: "The Atlas suits beginners.", rating: "down" }
+```
+
+The answer's text identifies it rather than an index, because what the widget shows after a restore is a window onto the thread rather than the whole of it; the host marks the most recent answer that matches. Recording it is optimistic — the customer sees the thanks immediately — and a rating already given comes back with `loadHistory` as `rating`, so nobody is asked twice.
+
 ### Knowing which page the question came from
 
 `askConcierge` takes `viewing`: the reference of the product the customer has open. It has to be a product in the catalogue — anything else is ignored, so a host can pass whatever its page says without trusting it.

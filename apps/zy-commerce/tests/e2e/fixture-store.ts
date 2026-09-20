@@ -3,6 +3,8 @@
  *
  *   tsx tests/e2e/fixture-store.ts create    → prints the new store as JSON
  *   tsx tests/e2e/fixture-store.ts destroy   → removes every e2e store and its files
+ *   tsx tests/e2e/fixture-store.ts conversation <tenantId>
+ *                                            → writes one sample conversation
  *
  * Run through tsx by global-setup.ts and global-teardown.ts — the same loader
  * prisma/seed.ts uses — so the generated Prisma client loads exactly as it does
@@ -74,12 +76,37 @@ async function create(db: PrismaClient) {
   return { tenantId: tenant.id, slug, email, password, leftovers };
 }
 
+/**
+ * One conversation in a store, for the tests that are about what an admin
+ * reads rather than about chatting. The assistant cannot produce one here:
+ * CI has no model key, so a real chat is never logged.
+ */
+async function writeConversation(db: PrismaClient, tenantId: string) {
+  if (!tenantId) throw new Error("usage: fixture-store.ts conversation <tenantId>");
+  const tenant = await db.tenant.findUnique({ where: { id: tenantId }, select: { slug: true } });
+  if (!tenant?.slug.startsWith(PREFIX)) throw new Error("Refusing to write a sample conversation into a store this suite did not create.");
+  const conversation = await db.chatConversation.create({
+    data: {
+      tenantId,
+      sessionToken: `${PREFIX}insights-${randomBytes(4).toString("hex")}`,
+      messageCount: 4,
+      messages: [
+        { role: "user", content: "Which paddle for a beginner?" },
+        { role: "assistant", content: "The Atlas suits beginners.", rating: "down" },
+        { role: "user", content: "write me a poem" },
+        { role: "assistant", content: "It seems like the question is not related…", blocked: "blocked-pattern" },
+      ],
+    },
+  });
+  return { conversationId: conversation.id };
+}
+
 async function main() {
   const command = process.argv[2];
-  if (command !== "create" && command !== "destroy") throw new Error("usage: fixture-store.ts create|destroy");
+  if (command !== "create" && command !== "destroy" && command !== "conversation") throw new Error("usage: fixture-store.ts create|destroy|conversation");
   const db = connect();
   try {
-    const result = command === "create" ? await create(db) : await destroyAll(db);
+    const result = command === "create" ? await create(db) : command === "destroy" ? await destroyAll(db) : await writeConversation(db, process.argv[3] ?? "");
     process.stdout.write(JSON.stringify(result));
   } finally {
     await db.$disconnect();

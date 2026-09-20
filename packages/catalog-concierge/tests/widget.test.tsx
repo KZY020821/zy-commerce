@@ -597,3 +597,73 @@ describe("ConciergeWidget — reaching a person", () => {
     expect(screen.queryByText(/Need a person\?/)).toBeNull();
   });
 });
+
+describe("ConciergeWidget — what the customer thought of the answer", () => {
+  it("offers a rating on answers, but never on the greeting or an error", async () => {
+    const onFeedback = vi.fn();
+    const onSend = vi
+      .fn<ConciergeWidgetProps["onSend"]>()
+      .mockResolvedValueOnce({ ok: false, error: "The assistant is busy." })
+      .mockResolvedValueOnce(replied);
+    renderWidget({ onFeedback, onSend });
+    openWidget();
+
+    // The greeting is ours, not an answer.
+    expect(screen.queryByRole("button", { name: "This answer helped" })).toBeNull();
+
+    type("first question");
+    fireEvent.click(sendButton());
+    await screen.findByText("The assistant is busy.");
+    expect(screen.queryByRole("button", { name: "This answer helped" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByText("Here are two options.");
+    expect(screen.getByRole("button", { name: "This answer helped" })).toBeTruthy();
+  });
+
+  it("sends the rating with the answer it belongs to, then thanks the customer instead of asking again", async () => {
+    const onFeedback = vi.fn(async () => {});
+    renderWidget({ onFeedback });
+    openWidget();
+    await sendAndWait("which paddle?");
+
+    fireEvent.click(screen.getByRole("button", { name: "This answer didn't help" }));
+
+    expect(onFeedback).toHaveBeenCalledWith({ answer: "Here are two options.", rating: "down" });
+    expect(await screen.findByText("Thanks — this helps the shop improve.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "This answer helped" })).toBeNull();
+  });
+
+  it("keeps the thanks on screen when the host could not record it", async () => {
+    renderWidget({ onFeedback: vi.fn(async () => Promise.reject(new Error("offline"))) });
+    openWidget();
+    await sendAndWait("which paddle?");
+
+    fireEvent.click(screen.getByRole("button", { name: "This answer helped" }));
+
+    expect(await screen.findByText("Thanks — this helps the shop improve.")).toBeTruthy();
+  });
+
+  it("asks for nothing when the host records no feedback", async () => {
+    renderWidget();
+    openWidget();
+    await sendAndWait("which paddle?");
+
+    expect(screen.queryByRole("button", { name: "This answer helped" })).toBeNull();
+  });
+
+  it("does not ask again for an answer rated on an earlier visit", async () => {
+    renderWidget({
+      onFeedback: vi.fn(),
+      loadHistory: vi.fn(async () => [
+        { role: "user" as const, content: "which paddle?" },
+        { role: "assistant" as const, content: "The Atlas.", rating: "up" as const },
+      ]),
+    });
+    openWidget();
+
+    expect(await screen.findByText("The Atlas.")).toBeTruthy();
+    expect(screen.getByText("Thanks — this helps the shop improve.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "This answer helped" })).toBeNull();
+  });
+});

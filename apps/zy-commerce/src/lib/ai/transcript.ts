@@ -73,6 +73,7 @@ export function toRestoredMessages(turns: StoredTurn[], cards: Map<string, Produ
       content: turn.content,
       ...(turn.suggestions?.length ? { suggestions: turn.suggestions } : {}),
       ...(products.length > 0 ? { products } : {}),
+      ...(turn.rating ? { rating: turn.rating } : {}),
     };
   });
 }

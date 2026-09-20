@@ -17,7 +17,7 @@ vi.mock("catalog-concierge", async (importOriginal) => ({
 
 import { askConcierge, formatMoney, isAssistantConfigured, type ConciergeReply } from "catalog-concierge";
 import { cookies, headers } from "next/headers";
-import { askAssistantAction, loadChatHistoryAction, startNewChatAction } from "@/app/[tenant]/(storefront)/assistant/actions";
+import { askAssistantAction, loadChatHistoryAction, rateAnswerAction, startNewChatAction } from "@/app/[tenant]/(storefront)/assistant/actions";
 import { rateLimitStore } from "@/lib/auth/rate-limit";
 import { getTenantDb, requireCurrentTenant } from "@/lib/tenant/current";
 
@@ -371,5 +371,73 @@ describe("loadChatHistoryAction — putting the conversation back on screen", ()
 
     expect(await loadChatHistoryAction()).toEqual([]);
     expect(db.product.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("rateAnswerAction — what the customer thought of an answer", () => {
+  const thread = {
+    id: "c-1",
+    messageCount: 4,
+    messages: [
+      { role: "user", content: "which paddle?" },
+      { role: "assistant", content: "The Atlas.", productSkus: ["PAD-1"] },
+      { role: "user", content: "and the other one?" },
+      { role: "assistant", content: "The Vanguard." },
+    ],
+  };
+
+  const stored = () => (db.chatConversation.update.mock.calls[0]![0] as { data: { messages: Array<Record<string, unknown>> } }).data.messages;
+
+  beforeEach(() => {
+    db = threadStore(thread);
+    vi.mocked(getTenantDb).mockResolvedValue(db as never);
+  });
+
+  it("marks the answer the rating belongs to, and leaves the rest of the thread alone", async () => {
+    await rateAnswerAction({ answer: "The Atlas.", rating: "up" });
+
+    expect(stored()[1]).toMatchObject({ role: "assistant", content: "The Atlas.", rating: "up" });
+    expect(stored()[3]).not.toHaveProperty("rating");
+    expect(stored()).toHaveLength(4);
+  });
+
+  it("ignores an answer that is not in this thread", async () => {
+    await rateAnswerAction({ answer: "Something it never said.", rating: "down" });
+    expect(db.chatConversation.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses nonsense without reading anything", async () => {
+    await rateAnswerAction({ answer: "", rating: "up" });
+    await rateAnswerAction({ answer: "The Atlas.", rating: "sideways" as "up" });
+    await rateAnswerAction({ answer: "x".repeat(4001), rating: "up" });
+
+    expect(getTenantDb).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for a browser with no thread of its own", async () => {
+    jar = cookieJar();
+    vi.mocked(cookies).mockResolvedValue(jar as never);
+
+    await rateAnswerAction({ answer: "The Atlas.", rating: "up" });
+
+    expect(getTenantDb).not.toHaveBeenCalled();
+    expect(jar.set).not.toHaveBeenCalled();
+  });
+
+  it("stops one session from voting over and over", async () => {
+    for (let i = 0; i < 60; i++) await rateAnswerAction({ answer: "The Atlas.", rating: "up" });
+    db.chatConversation.update.mockClear();
+
+    await rateAnswerAction({ answer: "The Atlas.", rating: "up" });
+
+    expect(db.chatConversation.update).not.toHaveBeenCalled();
+  });
+
+  // A rating is a courtesy: nothing the customer sees may depend on it.
+  it("never throws when the write fails", async () => {
+    db.chatConversation.update.mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(rateAnswerAction({ answer: "The Atlas.", rating: "down" })).resolves.toBeUndefined();
+    expect(console.error).toHaveBeenCalled();
   });
 });

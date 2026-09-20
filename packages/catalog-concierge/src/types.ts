@@ -126,6 +126,8 @@ export interface RestoredMessage {
   content: string;
   suggestions?: string[];
   products?: ProductCard[];
+  /** A rating the customer already gave this answer, so it is not asked twice. */
+  rating?: "up" | "down";
 }
 
 export type StockStatus = "in_stock" | "low_stock" | "out_of_stock";

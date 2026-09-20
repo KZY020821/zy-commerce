@@ -47,6 +47,10 @@ export interface WidgetLabels {
   earlier: string;
   /** Precedes the link to a person, e.g. "Need a person?". */
   handoffPrompt: string;
+  /** Accessible names of the two rating buttons, and what replaces them. */
+  ratingUp: string;
+  ratingDown: string;
+  ratingThanks: string;
   /** Shown while that conversation is being fetched. */
   restoring: string;
   /** The chip offered when a reply failed. Tapping it re-sends the question. */
@@ -71,6 +75,9 @@ export const DEFAULT_WIDGET_LABELS: WidgetLabels = {
   jumpToLatest: "Jump to latest",
   earlier: "Earlier in this chat",
   handoffPrompt: "Need a person?",
+  ratingUp: "This answer helped",
+  ratingDown: "This answer didn't help",
+  ratingThanks: "Thanks — this helps the shop improve.",
   restoring: "Looking for your last chat…",
   retry: "Try again",
   priceFrom: "from ",
@@ -112,6 +119,15 @@ export interface ConciergeWidgetProps {
   /** Translations / rewording. Anything omitted keeps its English default. */
   labels?: Partial<WidgetLabels>;
   /**
+   * Records what a customer thought of an answer.
+   *
+   * Without it no rating is offered at all. With it, each answer carries two
+   * buttons, and what the host does with them — usually storing them beside
+   * the conversation — is what tells a shop owner where the assistant is
+   * letting customers down.
+   */
+  onFeedback?: (feedback: { answer: string; rating: "up" | "down" }) => Promise<void> | void;
+  /**
    * A way to reach a human: WhatsApp, email, a contact page.
    *
    * An assistant that cannot help is where most shops lose the sale, so the
@@ -144,6 +160,8 @@ interface UiMessage {
   retry?: string;
   /** First message of a restored conversation: the divider goes above it. */
   earlier?: boolean;
+  /** Set once the customer has rated this answer, here or on an earlier visit. */
+  rating?: "up" | "down";
 }
 
 /** About six lines of text. Past that the box scrolls — downwards, never sideways. */
@@ -170,6 +188,7 @@ export function ConciergeWidget({
   onSend,
   onNewChat,
   loadHistory,
+  onFeedback,
   configured = true,
   renderProductLink,
   labels,
@@ -340,6 +359,19 @@ export function ConciergeWidget({
     });
   }
 
+  /**
+   * Records a rating optimistically: the buttons are a courtesy, and making
+   * the customer wait for a round trip to see them acknowledged would make
+   * this feel heavier than it is. A failure leaves the thanks on screen and
+   * is the host's to log.
+   */
+  function rate(index: number, rating: "up" | "down") {
+    const message = messages[index];
+    if (!message || message.rating) return;
+    setMessages((prev) => prev.map((m, i) => (i === index ? { ...m, rating } : m)));
+    void Promise.resolve(onFeedback?.({ answer: message.content, rating })).catch(() => {});
+  }
+
   /** Sends the failed question again in place of the failed exchange, so it isn't shown twice. */
   function retry(question: string) {
     const base = messages.slice(0, -2);
@@ -471,6 +503,21 @@ export function ConciergeWidget({
                   >
                     {m.content}
                   </div>
+
+                  {onFeedback && m.role === "assistant" && !m.error && i > 0 ? (
+                    m.rating ? (
+                      <p className="px-1 text-[11px] text-muted-foreground">{text.ratingThanks}</p>
+                    ) : (
+                      <div className="flex items-center gap-0.5 px-0.5">
+                        <RatingButton label={text.ratingUp} onClick={() => rate(i, "up")}>
+                          <ThumbIcon />
+                        </RatingButton>
+                        <RatingButton label={text.ratingDown} onClick={() => rate(i, "down")}>
+                          <ThumbIcon down />
+                        </RatingButton>
+                      </div>
+                    )
+                  ) : null}
 
                   {m.products && m.products.length > 0 ? (
                     <div className="grid gap-2">
@@ -631,6 +678,20 @@ function IconButton({ label, onClick, disabled, children }: { label: string; onC
   );
 }
 
+function RatingButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="grid size-7 place-items-center rounded-full text-muted-foreground/70 transition hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+    >
+      {children}
+    </button>
+  );
+}
+
 function Icon({ children, className = "size-4" }: { children: ReactNode; className?: string }) {
   return (
     <svg aria-hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -663,6 +724,12 @@ const SendIcon = () => (
 const DownIcon = () => (
   <Icon className="size-3.5">
     <path d="M12 5v14M5 12l7 7 7-7" />
+  </Icon>
+);
+const ThumbIcon = ({ down = false }: { down?: boolean }) => (
+  <Icon className={down ? "size-3.5 rotate-180" : "size-3.5"}>
+    <path d="M7 10v11H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h3Z" />
+    <path d="M7 10l4.5-7a2.5 2.5 0 0 1 4.3 2.5L14.5 9h4.3a2 2 0 0 1 2 2.4l-1.3 7a2 2 0 0 1-2 1.6H7" />
   </Icon>
 );
 const ChevronIcon = () => (

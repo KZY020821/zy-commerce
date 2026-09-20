@@ -3,13 +3,13 @@
  * a legal safeguard, so its presence is asserted rather than assumed.
  */
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/app/[tenant]/(storefront)/assistant/actions", () => ({ askAssistantAction: vi.fn(), startNewChatAction: vi.fn(), loadChatHistoryAction: vi.fn() }));
+vi.mock("@/app/[tenant]/(storefront)/assistant/actions", () => ({ askAssistantAction: vi.fn(), startNewChatAction: vi.fn(), loadChatHistoryAction: vi.fn(), rateAnswerAction: vi.fn() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/products/slk-atlas-max" }));
 
 import type { Tenant } from "@/generated/prisma/client";
-import { askAssistantAction, loadChatHistoryAction, startNewChatAction } from "@/app/[tenant]/(storefront)/assistant/actions";
+import { askAssistantAction, loadChatHistoryAction, rateAnswerAction, startNewChatAction } from "@/app/[tenant]/(storefront)/assistant/actions";
 import { StorefrontAssistant } from "@/components/storefront/assistant";
 import { StorefrontFooter } from "@/components/storefront/footer";
 import { StorefrontHeader } from "@/components/storefront/header";
@@ -95,6 +95,11 @@ describe("StockBadge", () => {
 });
 
 describe("StorefrontAssistant", () => {
+  // Every test gets a widget with nothing to restore unless it says otherwise.
+  beforeEach(() => {
+    vi.mocked(loadChatHistoryAction).mockResolvedValue([]);
+  });
+
   it("mounts the widget with the store's assistant, and shows the offline state when unconfigured", () => {
     render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured={false} />);
     fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
@@ -128,10 +133,44 @@ describe("StorefrontAssistant", () => {
     expect(screen.getByText("Earlier in this chat")).toBeTruthy();
   });
 
+  it("records what the customer thought of an answer", async () => {
+    vi.mocked(askAssistantAction).mockResolvedValue({ ok: true, answer: "Try the Atlas.", suggestions: [], products: [] });
+    vi.mocked(rateAnswerAction).mockResolvedValue(undefined);
+    render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "which paddle?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Try the Atlas.");
+
+    fireEvent.click(screen.getByRole("button", { name: "This answer didn't help" }));
+
+    expect(rateAnswerAction).toHaveBeenCalledWith({ answer: "Try the Atlas.", rating: "down" });
+  });
+
+  it("renders the assistant's product cards as client-side links, and a card with no page as a dead end", async () => {
+    vi.mocked(askAssistantAction).mockResolvedValue({
+      ok: true,
+      answer: "Two options.",
+      suggestions: [],
+      products: [
+        { ref: "PAD-1", name: "Atlas", url: "/products/atlas", imageUrl: null, price: 22090, priceFrom: false, priceLabel: "RM 220.90", stockLabel: "In stock" },
+        { ref: "PAD-2", name: "Vanguard", url: null, imageUrl: null, price: 44590, priceFrom: true, priceLabel: "RM 445.90", stockLabel: "Sold out" },
+      ],
+    });
+    render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "paddles?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Two options.");
+
+    expect(screen.getByRole("link", { name: /Atlas/ }).getAttribute("href")).toBe("/products/atlas");
+    expect(screen.getByRole("link", { name: /Vanguard/ }).getAttribute("href")).toBe("#");
+  });
+
   it("tells customers their chat is kept, because this store keeps it", () => {
     render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
     fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
-    expect(screen.getByText("Chats are saved so this store can improve its answers.")).toBeTruthy();
+    expect(screen.getByText("Chats are kept for 90 days so this store can improve its answers.")).toBeTruthy();
   });
 
   it("wires New chat to the server, so the assistant forgets the old thread", async () => {

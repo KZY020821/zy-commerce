@@ -18,7 +18,7 @@ import { cookies, headers } from "next/headers";
 import { z } from "zod";
 import { askConcierge, isAssistantConfigured, type ConversationTurn, type ProductCard, type RestoredMessage } from "catalog-concierge";
 import type { ChatConversation, Prisma } from "@/generated/prisma/client";
-import { appendTurns, historyForModel, storedTurns, type StoredTurn } from "@/lib/ai/chat-history";
+import { appendTurns, historyForModel, lastRatableTurn, storedTurns, type StoredTurn } from "@/lib/ai/chat-history";
 import { createPrismaCatalogAdapter } from "@/lib/ai/prisma-adapter";
 import { productCardsBySku, productSlugFromPath, referencedSkus, toRestoredMessages, RESTORED_TURNS } from "@/lib/ai/transcript";
 import { checkRateLimit, clientIpFromHeaders } from "@/lib/auth/rate-limit";
@@ -30,6 +30,8 @@ const RATE_PER_IP = { limit: 60, windowMs: 15 * 60_000 };
 const RATE_PER_SESSION = { limit: 30, windowMs: 15 * 60_000 };
 /** Restoring a conversation is two indexed reads; a page reload may do it. */
 const RATE_HISTORY_PER_IP = { limit: 120, windowMs: 15 * 60_000 };
+/** One rating per answer is the honest use; the rest is someone playing. */
+const RATE_FEEDBACK_PER_SESSION = { limit: 60, windowMs: 15 * 60_000 };
 
 /**
  * `history` is accepted so the widget's transport contract is unchanged, but it
@@ -102,6 +104,42 @@ export async function loadChatHistoryAction(): Promise<RestoredMessage[]> {
 
   const cards = await productCardsBySku(db, { currency: tenant.currency, locale: tenant.locale }, referencedSkus(turns));
   return toRestoredMessages(turns, cards);
+}
+
+/**
+ * What a customer thought of an answer.
+ *
+ * Stored beside the answer it belongs to, so the store owner can see which
+ * replies are letting people down rather than guessing from a transcript.
+ * Everything here fails quietly: a rating is a courtesy, and nothing a
+ * customer sees should depend on it.
+ */
+export async function rateAnswerAction(raw: { answer: string; rating: "up" | "down" }): Promise<void> {
+  const parsed = z.object({ answer: z.string().trim().min(1).max(4000), rating: z.enum(["up", "down"]) }).safeParse(raw);
+  if (!parsed.success) return;
+
+  const jar = await cookies();
+  const sessionToken = jar.get(SESSION_COOKIE)?.value;
+  if (!sessionToken || !/^[a-f0-9]{32}$/.test(sessionToken)) return;
+  if (!checkRateLimit(`chat:rating:${sessionToken}`, RATE_FEEDBACK_PER_SESSION).ok) return;
+
+  const tenant = await requireCurrentTenant();
+  if (!tenant.assistantEnabled) return;
+
+  try {
+    const db = await getTenantDb();
+    const existing = await db.chatConversation.findUnique({ where: { tenantId_sessionToken: { tenantId: tenant.id, sessionToken } } });
+    if (!existing) return;
+
+    const turns = storedTurns(existing.messages);
+    const index = lastRatableTurn(turns, parsed.data.answer);
+    if (index < 0) return;
+
+    const updated = turns.map((turn, i) => (i === index ? { ...turn, rating: parsed.data.rating } : turn));
+    await db.chatConversation.update({ where: { id: existing.id }, data: { messages: updated as unknown as Prisma.InputJsonValue } });
+  } catch (err) {
+    console.error("[assistant] failed to record feedback", err);
+  }
 }
 
 interface LoggedAnswer {
