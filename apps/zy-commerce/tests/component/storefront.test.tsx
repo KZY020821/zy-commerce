@@ -5,10 +5,11 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/app/[tenant]/(storefront)/assistant/actions", () => ({ askAssistantAction: vi.fn(), startNewChatAction: vi.fn() }));
+vi.mock("@/app/[tenant]/(storefront)/assistant/actions", () => ({ askAssistantAction: vi.fn(), startNewChatAction: vi.fn(), loadChatHistoryAction: vi.fn() }));
+vi.mock("next/navigation", () => ({ usePathname: () => "/products/slk-atlas-max" }));
 
 import type { Tenant } from "@/generated/prisma/client";
-import { askAssistantAction, startNewChatAction } from "@/app/[tenant]/(storefront)/assistant/actions";
+import { askAssistantAction, loadChatHistoryAction, startNewChatAction } from "@/app/[tenant]/(storefront)/assistant/actions";
 import { StorefrontAssistant } from "@/components/storefront/assistant";
 import { StorefrontFooter } from "@/components/storefront/footer";
 import { StorefrontHeader } from "@/components/storefront/header";
@@ -99,6 +100,52 @@ describe("StorefrontAssistant", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
     expect(screen.getByText("Hi from Acme")).toBeTruthy();
     expect(screen.getByText(/not connected to a model yet/)).toBeTruthy();
+  });
+
+  it("sends the page the question was asked from, so the assistant knows what \"this one\" is", async () => {
+    vi.mocked(askAssistantAction).mockResolvedValue({ ok: true, answer: "It suits beginners.", suggestions: [], products: [] });
+    render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
+
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "is this one good for a beginner?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("It suits beginners.");
+
+    expect(askAssistantAction).toHaveBeenCalledWith({ message: "is this one good for a beginner?", history: [], path: "/products/slk-atlas-max" });
+  });
+
+  it("puts the conversation from the last visit back on screen when the chat is opened", async () => {
+    vi.mocked(loadChatHistoryAction).mockResolvedValue([
+      { role: "user", content: "which paddle for a beginner?" },
+      { role: "assistant", content: "The Atlas is the gentlest.", suggestions: ["Compare the top two"] },
+    ]);
+    render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
+
+    expect(loadChatHistoryAction).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
+
+    expect(await screen.findByText("The Atlas is the gentlest.")).toBeTruthy();
+    expect(screen.getByText("Earlier in this chat")).toBeTruthy();
+  });
+
+  it("renders the assistant's product cards as client-side links, and a card with no page as a dead end", async () => {
+    vi.mocked(askAssistantAction).mockResolvedValue({
+      ok: true,
+      answer: "Two options.",
+      suggestions: [],
+      products: [
+        { ref: "PAD-1", name: "Atlas", url: "/products/atlas", imageUrl: null, price: 22090, priceFrom: false, priceLabel: "RM 220.90", stockLabel: "In stock" },
+        { ref: "PAD-2", name: "Vanguard", url: null, imageUrl: null, price: 44590, priceFrom: true, priceLabel: "RM 445.90", stockLabel: "Sold out" },
+      ],
+    });
+    render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "paddles?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Two options.");
+
+    expect(screen.getByRole("link", { name: /Atlas/ }).getAttribute("href")).toBe("/products/atlas");
+    expect(screen.getByRole("link", { name: /Vanguard/ }).getAttribute("href")).toBe("#");
   });
 
   it("tells customers their chat is kept, because this store keeps it", () => {

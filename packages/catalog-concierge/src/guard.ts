@@ -72,7 +72,6 @@ const STRONG_INTENT = new Set([
   "lightweight", "durable", "weight", "heavy", "light",
   // common non-English shopping terms (this platform targets MY/SG)
   "harga", "berapa", "murah", "mahal", "saiz", "beli", "ada", "stok", "warna", "cadangkan",
-  "价格", "多少钱", "尺寸", "便宜", "推荐", "有货",
 ]);
 
 /** Words too generic to imply shopping on their own, kept out of the vocabulary. */
@@ -119,7 +118,6 @@ const REFERENTIAL_WORDS = new Set([
   "better", "worse", "softer", "stiffer", "thicker", "thinner",
   // non-English equivalents matching the store's own regions
   "ya", "tak", "tidak", "itu", "ini", "yang", "lagi", "kenapa", "macam",
-  "是", "不是", "这个", "那个", "为什么", "还有",
 ]);
 
 /**
@@ -130,6 +128,67 @@ const REFERENTIAL_WORDS = new Set([
  */
 const INTERROGATIVES = new Set(["why", "how", "what", "which", "who", "whose", "where", "when"]);
 const MAX_BARE_INTERROGATIVE_TOKENS = 2;
+
+/**
+ * Scripts that are written without spaces between words.
+ *
+ * Every rule above works on tokens, and tokenising Chinese on spaces yields
+ * one token that is the whole sentence — so "有便宜的球拍吗" ("do you have a
+ * cheap paddle?") matched nothing and was refused as off-topic, in a market
+ * where a good share of customers type exactly that. These messages are
+ * matched by substring instead, which is what the lack of separators calls
+ * for. Chinese is covered in depth; Japanese and Korean cover the common
+ * shopping words and question forms.
+ */
+const UNSEGMENTED_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+/** Off-topic intents, mirroring OFF_TOPIC_PATTERNS. Checked first, as they are. */
+const UNSEGMENTED_OFF_TOPIC = [
+  "天气", "天氣", "气温", "氣溫", "写一首", "寫一首", "写首诗", "寫首詩", "笑话", "笑話", "讲个故事", "講個故事",
+  "翻译", "翻譯", "新闻", "新聞", "总统", "總統", "首相", "选举", "選舉", "股票", "比特币", "比特幣",
+  "食谱", "食譜", "怎么做菜", "怎麼做菜", "作业", "作業", "数学题", "數學題",
+  "忽略以上", "忽略之前", "系统提示", "系統提示", "扮演",
+  "天気", "翻訳", "ニュース", "レシピ", "冗談",
+  "날씨", "번역", "뉴스",
+];
+
+/** Shopping words: the unsegmented half of STRONG_INTENT. */
+const UNSEGMENTED_INTENT = [
+  "价格", "價格", "价钱", "價錢", "多少钱", "多少錢", "便宜", "贵", "貴", "预算", "預算", "折扣", "优惠", "優惠", "促销", "促銷",
+  "尺寸", "尺码", "尺碼", "大小", "重量", "颜色", "顏色", "材质", "材質", "规格", "規格", "型号", "型號", "品牌",
+  "推荐", "推薦", "介绍", "介紹", "适合", "適合", "比较", "比較", "区别", "區別", "差别", "差別",
+  "新手", "初学", "初學", "进阶", "進階", "专业", "專業",
+  "购买", "購買", "下单", "下單", "订单", "訂單", "库存", "庫存", "有货", "有貨", "现货", "現貨", "缺货", "缺貨",
+  "发货", "發貨", "送货", "送貨", "运费", "運費", "邮费", "郵費", "退货", "退貨", "退款", "保修", "保固",
+  "产品", "產品", "商品", "款式", "卖", "賣",
+  "値段", "いくら", "サイズ", "在庫", "おすすめ", "送料", "返品",
+  "가격", "얼마", "사이즈", "재고", "추천", "배송", "반품",
+];
+
+/** Markers that make the message a question — usually one for the shop. */
+const UNSEGMENTED_QUESTION = [
+  "吗", "嗎", "呢", "什么", "什麼", "怎么", "怎麼", "怎样", "怎樣", "哪", "多少", "几", "幾",
+  "为什么", "為什麼", "能不能", "可不可以", "有没有", "有沒有", "是不是", "请问", "請問", "？",
+  "ですか", "ますか", "どれ", "どの",
+  "있나요", "인가요", "어느",
+];
+
+/** Openers, matched on a short message like their English counterparts. */
+const UNSEGMENTED_GREETING = ["你好", "您好", "哈喽", "哈囉", "嗨", "早安", "午安", "晚安", "谢谢", "謝謝", "感谢", "感謝", "こんにちは", "ありがとう", "안녕하세요", "감사합니다"];
+
+/** Pointing back at what is already on screen. */
+const UNSEGMENTED_REFERENTIAL = [
+  "这个", "這個", "那个", "那個", "这款", "這款", "那款", "这两", "這兩", "第一", "第二", "第三",
+  "刚才", "剛才", "前面", "还有", "還有", "其他", "其它", "另一", "一样", "一樣", "更便宜", "便宜点", "便宜點", "好的",
+  "これ", "それ", "こちら", "이거", "그거",
+];
+
+/** Longest message still treated as a greeting in a script without spaces. */
+const MAX_UNSEGMENTED_GREETING_CHARS = 10;
+
+function containsAny(text: string, terms: string[]): boolean {
+  return terms.some((term) => text.includes(term));
+}
 
 /** Lowercase word tokens, keeping alphanumerics like "kd19" and "16mm". */
 export function tokenize(text: string): string[] {
@@ -188,7 +247,7 @@ export function buildStoreVocabulary(src: VocabularySource): Set<string> {
 }
 
 export type TopicVerdict =
-  | { onTopic: true; reason: "catalogue-term" | "shopping-intent" | "greeting" | "follow-up" }
+  | { onTopic: true; reason: "catalogue-term" | "shopping-intent" | "greeting" | "follow-up" | "unsegmented-question" }
   | { onTopic: false; reason: "blocked-pattern" | "no-signal" };
 
 export interface ClassifyOptions {
@@ -214,6 +273,14 @@ export interface ClassifyOptions {
    * track it.
    */
   awaitingAnswer?: boolean;
+  /**
+   * True when the customer is on a product page as they type.
+   *
+   * "Is this any good?" names nothing the catalogue would recognise, but it is
+   * obviously about the product on screen — the same reasoning as the
+   * follow-up rule, with the page playing the part of the previous turn.
+   */
+  viewingProduct?: boolean;
   /**
    * Quick-reply chips the assistant offered on its last turn.
    *
@@ -247,6 +314,7 @@ export function classifyMessage(message: string, vocab: Set<string>, opts: Class
   for (const pattern of OFF_TOPIC_PATTERNS) {
     if (pattern.test(text)) return { onTopic: false, reason: "blocked-pattern" };
   }
+  if (containsAny(text, UNSEGMENTED_OFF_TOPIC)) return { onTopic: false, reason: "blocked-pattern" };
 
   // 2. A chip the assistant just offered. It put the words on screen, so
   //    refusing them would make the assistant contradict itself.
@@ -275,11 +343,24 @@ export function classifyMessage(message: string, vocab: Set<string>, opts: Class
     return { onTopic: true, reason: "greeting" };
   }
 
-  // 6. Short replies mid-conversation carry no keywords of their own, so they
-  //    need a reason to be let through beyond simply being short. Letting any
-  //    short message pass once a thread exists meant "give me a haiku" reached
-  //    the model on the second turn of a real conversation.
-  if (opts.hasHistory && tokens.length > 0 && tokens.length <= MAX_FOLLOW_UP_TOKENS) {
+  // 6. The same three questions again, for a message written without spaces
+  //    between its words. Substring matching is the only thing that can find
+  //    a word in "有便宜的球拍吗" without a Chinese dictionary.
+  if (UNSEGMENTED_SCRIPT.test(text)) {
+    if (containsAny(text, UNSEGMENTED_INTENT)) return { onTopic: true, reason: "shopping-intent" };
+    if (text.length <= MAX_UNSEGMENTED_GREETING_CHARS && containsAny(text, UNSEGMENTED_GREETING)) return { onTopic: true, reason: "greeting" };
+    // A question asked inside a shop is nearly always about the shop, and the
+    // guard's standing bias is that a false block costs more than a false pass.
+    if (containsAny(text, UNSEGMENTED_QUESTION)) return { onTopic: true, reason: "unsegmented-question" };
+    if ((opts.hasHistory || opts.viewingProduct) && (opts.awaitingAnswer || containsAny(text, UNSEGMENTED_REFERENTIAL))) return { onTopic: true, reason: "follow-up" };
+  }
+
+  // 7. Short replies mid-conversation — or asked with a product open — carry no
+  //    keywords of their own, so they need a reason to be let through beyond
+  //    simply being short. Letting any short message pass once a thread exists
+  //    meant "give me a haiku" reached the model on the second turn of a real
+  //    conversation.
+  if ((opts.hasHistory || opts.viewingProduct) && tokens.length > 0 && tokens.length <= MAX_FOLLOW_UP_TOKENS) {
     // The assistant just asked something, so this is its answer — and the
     // answer may be a word the catalogue has never heard of.
     if (opts.awaitingAnswer) return { onTopic: true, reason: "follow-up" };

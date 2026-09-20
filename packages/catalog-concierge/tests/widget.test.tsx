@@ -2,7 +2,7 @@
  * The drop-in widget, rendered in jsdom. This is the part a client's customers
  * actually touch, so it is tested the way they use it: open it, type, tap.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProductCard } from "../src/types";
 import { ConciergeWidget, type ConciergeWidgetProps, type WidgetSendResult } from "../src/ui/widget";
@@ -508,5 +508,73 @@ describe("ConciergeWidget — reading back through the conversation", () => {
 
     await sendAndWait("show me paddles");
     expect(screen.queryByRole("button", { name: /Jump to latest/ })).toBeNull();
+  });
+});
+
+describe("ConciergeWidget — putting the earlier conversation back", () => {
+  const earlier = [
+    { role: "user" as const, content: "which paddle for a beginner?" },
+    { role: "assistant" as const, content: "The Atlas is the gentlest one.", suggestions: ["Compare the top two"], products: [card] },
+  ];
+
+  it("asks for it only when the chat is opened, and shows it under a divider", async () => {
+    const loadHistory = vi.fn(async () => earlier);
+    renderWidget({ loadHistory });
+    expect(loadHistory).not.toHaveBeenCalled();
+
+    openWidget();
+
+    expect(await screen.findByText("The Atlas is the gentlest one.")).toBeTruthy();
+    expect(loadHistory).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Hi! Ask me anything.")).toBeTruthy();
+    expect(screen.getByText("Earlier in this chat")).toBeTruthy();
+    expect(screen.getByText("which paddle for a beginner?")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Atlas Control Paddle/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Compare the top two" })).toBeTruthy();
+  });
+
+  it("sends the restored conversation on as history, so the screen and the assistant agree", async () => {
+    const { onSend } = renderWidget({ loadHistory: vi.fn(async () => earlier) });
+    openWidget();
+    await screen.findByText("The Atlas is the gentlest one.");
+
+    await sendAndWait("and the other one?");
+
+    expect(onSend).toHaveBeenLastCalledWith({
+      message: "and the other one?",
+      history: [
+        { role: "user", content: "which paddle for a beginner?" },
+        { role: "assistant", content: "The Atlas is the gentlest one." },
+      ],
+    });
+  });
+
+  it("does not put it back after the customer starts a new chat", async () => {
+    const loadHistory = vi.fn(async () => earlier);
+    renderWidget({ loadHistory, onNewChat: vi.fn(async () => {}) });
+    openWidget();
+    await screen.findByText("The Atlas is the gentlest one.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
+    await screen.findByRole("button", { name: "Help me choose" });
+
+    expect(screen.queryByText("The Atlas is the gentlest one.")).toBeNull();
+    expect(screen.queryByText("Earlier in this chat")).toBeNull();
+    expect(loadHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it("carries on with just the greeting when there is nothing to restore, or it fails", async () => {
+    renderWidget({ loadHistory: vi.fn(async () => []) });
+    openWidget();
+    await screen.findByRole("button", { name: "Help me choose" });
+    expect(screen.queryByText("Earlier in this chat")).toBeNull();
+
+    cleanup();
+
+    renderWidget({ loadHistory: vi.fn(async () => Promise.reject(new Error("offline"))) });
+    openWidget();
+    expect(screen.getByText("Hi! Ask me anything.")).toBeTruthy();
+    await sendAndWait("show me paddles");
+    expect(screen.getByText("Here are two options.")).toBeTruthy();
   });
 });

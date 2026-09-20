@@ -14,12 +14,14 @@
  * --muted and friends. A project without them still renders a usable widget,
  * just in the browser default palette.
  */
-import { useEffect, useLayoutEffect, useRef, useState, useTransition, type ReactNode } from "react";
-import type { ConversationTurn, ProductCard, StockLabel } from "../types";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, useTransition, type ReactNode } from "react";
+import type { ConversationTurn, ProductCard, RestoredMessage, StockLabel } from "../types";
 
 export type WidgetSendResult =
   | { ok: true; answer: string; suggestions: string[]; products: ProductCard[] }
   | { ok: false; error: string };
+
+export type { RestoredMessage };
 
 /** Every fixed string the widget shows. Override any subset through `labels`. */
 export interface WidgetLabels {
@@ -41,6 +43,10 @@ export interface WidgetLabels {
   inputHint: string;
   newChatFailed: string;
   jumpToLatest: string;
+  /** Divider above messages restored from an earlier visit. */
+  earlier: string;
+  /** Shown while that conversation is being fetched. */
+  restoring: string;
   /** The chip offered when a reply failed. Tapping it re-sends the question. */
   retry: string;
   /** Prefix for a price that varies by variant, e.g. "from RM 220.90". */
@@ -61,6 +67,8 @@ export const DEFAULT_WIDGET_LABELS: WidgetLabels = {
   inputHint: "Enter to send · Shift+Enter for a new line",
   newChatFailed: "Couldn't start a new chat. Please try again.",
   jumpToLatest: "Jump to latest",
+  earlier: "Earlier in this chat",
+  restoring: "Looking for your last chat…",
   retry: "Try again",
   priceFrom: "from ",
 };
@@ -83,6 +91,17 @@ export interface ConciergeWidgetProps {
    * to start a fresh thread there; without it only the screen is cleared.
    */
   onNewChat?: () => Promise<void> | void;
+  /**
+   * Puts the conversation the customer already had back on screen, called once
+   * when the chat is first opened.
+   *
+   * A host that keeps history server-side (as the README advises) has the
+   * assistant remembering a conversation the customer can no longer see after
+   * a reload — it will answer "the first one" against a blank screen. Return
+   * the recent turns, oldest first, and the widget shows them under an
+   * "earlier" divider. Failures are ignored: the chat still works without it.
+   */
+  loadHistory?: () => Promise<RestoredMessage[]>;
   /** Set false to show an "offline" state, e.g. when no model key is configured. */
   configured?: boolean;
   /** Rendered when a product card is clicked. Defaults to a plain anchor. */
@@ -113,6 +132,8 @@ interface UiMessage {
   error?: boolean;
   /** On a failed reply: the question to send again when "Try again" is tapped. */
   retry?: string;
+  /** First message of a restored conversation: the divider goes above it. */
+  earlier?: boolean;
 }
 
 /** About six lines of text. Past that the box scrolls — downwards, never sideways. */
@@ -138,6 +159,7 @@ export function ConciergeWidget({
   starterSuggestions = [],
   onSend,
   onNewChat,
+  loadHistory,
   configured = true,
   renderProductLink,
   labels,
@@ -155,6 +177,7 @@ export function ConciergeWidget({
   const [resetting, setResetting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [scrolledAway, setScrolledAway] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
   /** Height of the part of the screen the browser is actually showing. */
   const [visibleHeight, setVisibleHeight] = useState<number | null>(null);
@@ -166,6 +189,8 @@ export function ConciergeWidget({
   const wasPending = useRef(false);
   /** False once the customer scrolls up: new replies must not yank them back. */
   const stickToBottom = useRef(true);
+  /** Asked for once per mount, so New chat is never undone by a late restore. */
+  const askedForHistory = useRef(false);
 
   /** Scrolls the transcript to the newest message and follows it from then on. */
   function scrollToLatest() {
@@ -181,6 +206,29 @@ export function ConciergeWidget({
   useEffect(() => {
     if (stickToBottom.current) scrollToLatest();
   }, [messages, pending, open]);
+
+  // What the customer said before they reloaded the page. The assistant still
+  // remembers it, so the screen should too.
+  useEffect(() => {
+    if (!open || !loadHistory || askedForHistory.current) return;
+    askedForHistory.current = true;
+    let cancelled = false;
+    setRestoring(true);
+    void (async () => {
+      try {
+        const earlier = await loadHistory();
+        if (!cancelled && earlier.length > 0) setMessages([opening, ...earlier.map((m, i) => ({ ...m, earlier: i === 0 }))]);
+      } catch {
+        // A conversation that cannot be restored is not worth an error over:
+        // the customer can still ask their question.
+      } finally {
+        if (!cancelled) setRestoring(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, loadHistory]);
 
   // Opening puts the cursor in the message box; closing hands focus back to the launcher.
   useEffect(() => {
@@ -384,58 +432,73 @@ export function ConciergeWidget({
         >
           {!configured ? <div className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground">{text.offlineNotice}</div> : null}
 
-          {messages.map((m, i) => (
-            <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
-              <div className={m.role === "user" ? "max-w-[85%]" : m.products?.length ? "w-full max-w-[92%] space-y-2" : "max-w-[92%]"}>
-                <div
-                  className={
-                    m.role === "user"
-                      ? "rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap text-primary-foreground"
-                      : m.error
-                        ? "rounded-2xl rounded-bl-md border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-[0.9375rem] leading-relaxed"
-                        : "rounded-2xl rounded-bl-md bg-muted px-3.5 py-2.5 text-[0.9375rem] leading-relaxed break-words whitespace-pre-line"
-                  }
-                >
-                  {m.content}
-                </div>
+          {restoring ? (
+            <p role="status" className="text-center text-xs text-muted-foreground">
+              {text.restoring}
+            </p>
+          ) : null}
 
-                {m.products && m.products.length > 0 ? (
-                  <div className="grid gap-2">
-                    {m.products.map((p) => {
-                      const body = (
-                        <>
-                          <span className="block size-16 shrink-0 overflow-hidden rounded-lg bg-muted">
-                            {/* Plain <img> on purpose: the package stays framework-agnostic. */}
-                            {p.imageUrl ? <img src={p.imageUrl} alt="" className="size-full object-cover" loading="lazy" /> : null}
-                          </span>
-                          <span className="min-w-0 flex-1 space-y-1">
-                            <span className="line-clamp-2 block text-sm leading-snug font-medium">{p.name}</span>
-                            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                              <span className="text-sm font-semibold">
-                                {p.priceFrom ? <span className="font-normal text-muted-foreground">{text.priceFrom}</span> : null}
-                                {p.priceLabel}
-                              </span>
-                              <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STOCK_BADGE[p.stockLabel]}`}>{p.stockLabel}</span>
-                            </span>
-                          </span>
-                          <ChevronIcon />
-                        </>
-                      );
-                      const className = "flex items-center gap-3 rounded-xl border bg-card p-2.5 text-left transition hover:border-foreground/20 hover:bg-muted/40";
-                      return renderProductLink ? (
-                        <div key={p.ref} className="contents">
-                          {renderProductLink(p, <span className={className}>{body}</span>)}
-                        </div>
-                      ) : (
-                        <a key={p.ref} href={p.url ?? "#"} className={className}>
-                          {body}
-                        </a>
-                      );
-                    })}
+          {messages.map((m, i) => (
+            <Fragment key={i}>
+              {m.earlier ? (
+                <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <span aria-hidden className="h-px flex-1 bg-border" />
+                  {text.earlier}
+                  <span aria-hidden className="h-px flex-1 bg-border" />
+                </p>
+              ) : null}
+              <div className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
+                <div className={m.role === "user" ? "max-w-[85%]" : m.products?.length ? "w-full max-w-[92%] space-y-2" : "max-w-[92%]"}>
+                  <div
+                    className={
+                      m.role === "user"
+                        ? "rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap text-primary-foreground"
+                        : m.error
+                          ? "rounded-2xl rounded-bl-md border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-[0.9375rem] leading-relaxed"
+                          : "rounded-2xl rounded-bl-md bg-muted px-3.5 py-2.5 text-[0.9375rem] leading-relaxed break-words whitespace-pre-line"
+                    }
+                  >
+                    {m.content}
                   </div>
-                ) : null}
+
+                  {m.products && m.products.length > 0 ? (
+                    <div className="grid gap-2">
+                      {m.products.map((p) => {
+                        const body = (
+                          <>
+                            <span className="block size-16 shrink-0 overflow-hidden rounded-lg bg-muted">
+                              {/* Plain <img> on purpose: the package stays framework-agnostic. */}
+                              {p.imageUrl ? <img src={p.imageUrl} alt="" className="size-full object-cover" loading="lazy" /> : null}
+                            </span>
+                            <span className="min-w-0 flex-1 space-y-1">
+                              <span className="line-clamp-2 block text-sm leading-snug font-medium">{p.name}</span>
+                              <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                <span className="text-sm font-semibold">
+                                  {p.priceFrom ? <span className="font-normal text-muted-foreground">{text.priceFrom}</span> : null}
+                                  {p.priceLabel}
+                                </span>
+                                <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STOCK_BADGE[p.stockLabel]}`}>{p.stockLabel}</span>
+                              </span>
+                            </span>
+                            <ChevronIcon />
+                          </>
+                        );
+                        const className = "flex items-center gap-3 rounded-xl border bg-card p-2.5 text-left transition hover:border-foreground/20 hover:bg-muted/40";
+                        return renderProductLink ? (
+                          <div key={p.ref} className="contents">
+                            {renderProductLink(p, <span className={className}>{body}</span>)}
+                          </div>
+                        ) : (
+                          <a key={p.ref} href={p.url ?? "#"} className={className}>
+                            {body}
+                          </a>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
               </div>
-            </div>
+            </Fragment>
           ))}
 
           {pending ? (
