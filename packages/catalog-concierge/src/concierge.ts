@@ -12,7 +12,7 @@
  * rate limiting, logging. Everything below it is the assistant.
  */
 import { runAssistant, type AssistantReply, type MessagesClient } from "./assistant";
-import { formatMoney, stockLabel } from "./format";
+import { toProductCard } from "./format";
 import { buildStoreVocabulary, classifyMessage, isQuestion, OFF_TOPIC_REPLY } from "./guard";
 import { getModelClient } from "./model";
 import { buildCatalogProfile } from "./profile";
@@ -38,6 +38,13 @@ export interface AskInput {
   message: string;
   /** The visible conversation so far, oldest first. */
   history: ConversationTurn[];
+  /**
+   * Reference of the product the customer is looking at as they type, if the
+   * host knows it. It tells the assistant what "this one" means, and it is
+   * ignored unless it matches a product in the catalogue — so a host can pass
+   * whatever its page happens to say without trusting it.
+   */
+  viewing?: string;
 }
 
 /** Cards shown with one reply — the ceiling the `respond` tool puts on productRefs. */
@@ -63,6 +70,10 @@ export async function askConcierge(options: ConciergeOptions, input: AskInput): 
   const profile = buildCatalogProfile(catalogue);
   const starters = buildStarterSuggestions(profile.categories.map((c) => c.name));
 
+  // Only a product this catalogue actually contains may become context — for
+  // the guard as well as for the model.
+  const viewing = input.viewing ? catalogue.find((p) => p.ref.toLowerCase() === input.viewing!.trim().toLowerCase()) : undefined;
+
   if (!options.disableTopicGuard) {
     const vocabulary = buildStoreVocabulary({
       storeName: options.store.storeName,
@@ -77,6 +88,8 @@ export async function askConcierge(options: ConciergeOptions, input: AskInput): 
     const verdict = classifyMessage(input.message, vocabulary, {
       hasHistory: input.history.length > 0,
       awaitingAnswer: isQuestion(lastAssistantTurn?.content),
+      // "Is this any good?" on a product page is about the product on screen.
+      viewingProduct: Boolean(viewing),
       // A chip the assistant offered is never off-topic, whatever it says.
       offeredSuggestions: lastAssistantTurn?.suggestions,
     });
@@ -92,6 +105,7 @@ export async function askConcierge(options: ConciergeOptions, input: AskInput): 
     tools: { adapter: options.adapter, catalogue, store: options.store },
     history: input.history,
     userMessage: input.message,
+    viewing: viewing ? { ref: viewing.ref, name: viewing.name } : undefined,
   });
 
   // What the model listed, and — when it listed nothing usable — what it was
@@ -221,16 +235,7 @@ function toCards(refs: string[], lookup: Map<string, ConciergeCatalogue[number]>
     const p = lookup.get(ref.trim().toLowerCase());
     if (!p || seen.has(p.ref)) continue;
     seen.add(p.ref);
-    cards.push({
-      ref: p.ref,
-      name: p.name,
-      url: p.url ?? null,
-      imageUrl: p.imageUrl ?? null,
-      price: p.price,
-      priceFrom: Boolean(p.priceFrom),
-      priceLabel: formatMoney(p.price, store.currency, store.locale),
-      stockLabel: stockLabel(p),
-    });
+    cards.push(toProductCard(p, store));
     if (cards.length === MAX_CARDS) break;
   }
   return cards;

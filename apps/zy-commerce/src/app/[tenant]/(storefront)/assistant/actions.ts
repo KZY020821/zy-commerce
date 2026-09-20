@@ -16,10 +16,11 @@ import { randomBytes } from "node:crypto";
 import OpenAI from "openai";
 import { cookies, headers } from "next/headers";
 import { z } from "zod";
-import { askConcierge, isAssistantConfigured, type ConversationTurn, type ProductCard } from "catalog-concierge";
+import { askConcierge, isAssistantConfigured, type ConversationTurn, type ProductCard, type RestoredMessage } from "catalog-concierge";
 import type { ChatConversation, Prisma } from "@/generated/prisma/client";
 import { appendTurns, historyForModel, storedTurns, type StoredTurn } from "@/lib/ai/chat-history";
 import { createPrismaCatalogAdapter } from "@/lib/ai/prisma-adapter";
+import { productCardsBySku, productSlugFromPath, referencedSkus, toRestoredMessages, RESTORED_TURNS } from "@/lib/ai/transcript";
 import { checkRateLimit, clientIpFromHeaders } from "@/lib/auth/rate-limit";
 import { getTenantDb, requireCurrentTenant } from "@/lib/tenant/current";
 
@@ -27,6 +28,8 @@ const SESSION_COOKIE = "zy_chat_session";
 const MAX_MESSAGE_CHARS = 1000;
 const RATE_PER_IP = { limit: 60, windowMs: 15 * 60_000 };
 const RATE_PER_SESSION = { limit: 30, windowMs: 15 * 60_000 };
+/** Restoring a conversation is two indexed reads; a page reload may do it. */
+const RATE_HISTORY_PER_IP = { limit: 120, windowMs: 15 * 60_000 };
 
 /**
  * `history` is accepted so the widget's transport contract is unchanged, but it
@@ -36,6 +39,12 @@ const RATE_PER_SESSION = { limit: 30, windowMs: 15 * 60_000 };
 const inputSchema = z.object({
   message: z.string().trim().min(1).max(MAX_MESSAGE_CHARS),
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(4000) })).max(24).optional(),
+  /**
+   * The storefront page the customer is on. The browser is the only thing that
+   * knows it, so it is never used as content: a product path is resolved
+   * against this tenant's own catalogue, and anything else is ignored.
+   */
+  path: z.string().max(512).optional(),
 });
 
 export type AssistantActionResult =
@@ -65,6 +74,34 @@ async function getOrCreateSessionToken(): Promise<string> {
 export async function startNewChatAction(): Promise<void> {
   const jar = await cookies();
   jar.set(SESSION_COOKIE, randomBytes(16).toString("hex"), sessionCookieOptions());
+}
+
+/**
+ * The conversation this browser already had, for the widget to put back on
+ * screen when the chat is opened.
+ *
+ * Read-only on purpose: it never issues a session cookie, so a first-time
+ * visitor who opens the chat is not given an identity just for looking, and a
+ * reload costs two indexed reads rather than a model call.
+ */
+export async function loadChatHistoryAction(): Promise<RestoredMessage[]> {
+  const jar = await cookies();
+  const sessionToken = jar.get(SESSION_COOKIE)?.value;
+  if (!sessionToken || !/^[a-f0-9]{32}$/.test(sessionToken)) return [];
+
+  const tenant = await requireCurrentTenant();
+  if (!tenant.assistantEnabled) return [];
+
+  const ip = clientIpFromHeaders(await headers());
+  if (!checkRateLimit(`chat:history:${ip}`, RATE_HISTORY_PER_IP).ok) return [];
+
+  const db = await getTenantDb();
+  const existing = await db.chatConversation.findUnique({ where: { tenantId_sessionToken: { tenantId: tenant.id, sessionToken } } });
+  const turns = storedTurns(existing?.messages).slice(-RESTORED_TURNS);
+  if (turns.length === 0) return [];
+
+  const cards = await productCardsBySku(db, { currency: tenant.currency, locale: tenant.locale }, referencedSkus(turns));
+  return toRestoredMessages(turns, cards);
 }
 
 interface LoggedAnswer {
@@ -107,7 +144,7 @@ async function logConversation(
   }
 }
 
-export async function askAssistantAction(raw: { message: string; history?: ConversationTurn[] }): Promise<AssistantActionResult> {
+export async function askAssistantAction(raw: { message: string; history?: ConversationTurn[]; path?: string }): Promise<AssistantActionResult> {
   const parsed = inputSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: "Please enter a message (up to 1000 characters)." };
 
@@ -130,13 +167,18 @@ export async function askAssistantAction(raw: { message: string; history?: Conve
   const existing = await db.chatConversation.findUnique({ where: { tenantId_sessionToken: { tenantId: tenant.id, sessionToken } } });
   const previous = storedTurns(existing?.messages);
 
+  // "Is this one good for a beginner?" asked on a product page names nothing
+  // the assistant can look up. The page does.
+  const slug = productSlugFromPath(parsed.data.path);
+  const viewing = slug ? (await db.product.findFirst({ where: { slug, active: true }, select: { sku: true } }))?.sku : undefined;
+
   try {
     const reply = await askConcierge(
       {
         store: { storeName: tenant.name, assistantName: tenant.assistantName, currency: tenant.currency, locale: tenant.locale, country: tenant.country },
         adapter,
       },
-      { message: parsed.data.message, history: historyForModel(previous) },
+      { message: parsed.data.message, history: historyForModel(previous), viewing },
     );
 
     await logConversation(db, tenant.id, sessionToken, existing, previous, parsed.data.message, {

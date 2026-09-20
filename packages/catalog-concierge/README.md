@@ -100,6 +100,26 @@ import { ConciergeWidget } from "catalog-concierge/react";
 
 The message box grows with the text to about six lines, then scrolls inside itself, so a long question is always readable at once. Enter sends and Shift+Enter starts a new line; an input method's Enter (choosing a Chinese or Japanese word) never sends. Ctrl/⌘ + Shift + K opens and closes the chat from anywhere on the page — pass `shortcutKey` to change the letter, or `null` to bind nothing.
 
+### Bringing the conversation back
+
+A host that keeps history server-side has the assistant remembering a conversation the customer can no longer see: reload the page and the screen is empty, but "the first one" still resolves. Give the widget a `loadHistory` and it puts the recent turns back, product cards included, under an "earlier" divider.
+
+```tsx
+<ConciergeWidget loadHistory={loadChatHistoryAction} … />
+```
+
+It is asked for once, when the chat is first opened, and never again after **New chat**. Failures are ignored — the customer can still ask their question. `toProductCard()` is exported so a restored card is built exactly like the one the reply drew.
+
+### Knowing which page the question came from
+
+`askConcierge` takes `viewing`: the reference of the product the customer has open. It has to be a product in the catalogue — anything else is ignored, so a host can pass whatever its page says without trusting it.
+
+```ts
+await askConcierge({ store, adapter }, { message, history, viewing: "SLK-ATLAS-MAX" });
+```
+
+Two things change. The model is told what "this one" means, and the guard treats a short question as a follow-up about that product — so "is this any good?", asked on a product page, reaches the model instead of being refused for naming nothing.
+
 ### Saying it in your customers' language
 
 Every fixed word in the widget comes from `labels`. Pass the ones you want changed; the rest stay in English.
@@ -170,9 +190,11 @@ The requirement was blunt: unrelated questions must not cost anything. So the de
 A message passes if it:
 
 - names something in the catalogue, using a vocabulary built per request from category names, brands, product names and specification values,
-- carries a standalone shopping intent such as *cheapest*, *do you ship*, *what size*, *help me choose*, including common Malay and Chinese equivalents,
+- carries a standalone shopping intent such as *cheapest*, *do you ship*, *what size*, *help me choose*, including common Malay equivalents,
 - is a greeting, or
-- is a short follow-up in an ongoing conversation, since "the first one" carries no keywords.
+- is a short follow-up in an ongoing conversation, or asked with a product page open, since "the first one" carries no keywords.
+
+Chinese, Japanese and Korean are written without spaces between words, so every rule above would miss: they are matched by substring instead, against shopping words, question markers, greetings and their own deny list. A Chinese question reaches the model; *"今天天气怎么样"* ("how's the weather?") does not.
 
 A deny list of clear non-commerce intents wins outright, so *"write me a poem about shoes"* is refused despite naming a product. Prompt-injection attempts such as *"ignore previous instructions"* are caught here too.
 

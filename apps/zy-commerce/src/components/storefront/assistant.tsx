@@ -8,8 +8,9 @@
  * navigation instead of a plain anchor.
  */
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { ConciergeWidget } from "catalog-concierge/react";
-import { askAssistantAction, startNewChatAction } from "@/app/[tenant]/(storefront)/assistant/actions";
+import { askAssistantAction, loadChatHistoryAction, startNewChatAction } from "@/app/[tenant]/(storefront)/assistant/actions";
 
 /**
  * Said plainly, where the customer is about to type. Every message is written
@@ -29,6 +30,10 @@ export function StorefrontAssistant({
   starterSuggestions: string[];
   configured: boolean;
 }) {
+  // Which page the question was asked from. The action resolves it against the
+  // catalogue, so the assistant knows what "this one" means on a product page.
+  const pathname = usePathname();
+
   return (
     <ConciergeWidget
       assistantName={assistantName}
@@ -36,8 +41,9 @@ export function StorefrontAssistant({
       starterSuggestions={starterSuggestions}
       configured={configured}
       privacyNote={PRIVACY_NOTE}
-      onSend={askAssistantAction}
+      onSend={(input) => askAssistantAction({ ...input, path: pathname })}
       onNewChat={startNewChatAction}
+      loadHistory={loadChatHistoryAction}
       renderProductLink={(product, children) => <Link href={product.url ?? "#"}>{children}</Link>}
     />
   );

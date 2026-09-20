@@ -264,3 +264,54 @@ describe("isQuestion", () => {
     expect(isQuestion(undefined)).toBe(false);
   });
 });
+
+/**
+ * Chinese is written without spaces, so every word-based rule in the guard
+ * used to miss and real shoppers were told their question was off-topic. The
+ * stores this was built for sell in Malaysia and Singapore.
+ */
+describe("classifyMessage — a language written without spaces between words", () => {
+  it("lets a Chinese shopping question through, with or without a catalogue word in it", () => {
+    const shopping: Array<[string, string]> = [
+      ["有便宜的球拍吗?", "shopping-intent"], // "do you have a cheap paddle?"
+      ["这个多少钱", "shopping-intent"], //      "how much is this one?"
+      ["请问有货吗", "shopping-intent"], //      "is it in stock?"
+      ["推荐一款适合新手的", "shopping-intent"], // "recommend one for a beginner"
+      ["尺寸怎么选", "shopping-intent"], //      "how do I choose a size?"
+      ["有羽毛球拍吗", "unsegmented-question"], // no shopping word at all, but it is a question
+      ["请问这款怎么样", "unsegmented-question"],
+    ];
+    for (const [message, reason] of shopping) {
+      expect(classifyMessage(message, paddleVocab, fresh), message).toEqual({ onTopic: true, reason });
+    }
+  });
+
+  it("still refuses a Chinese message that has nothing to do with the store", () => {
+    for (const message of ["今天天气怎么样", "写一首诗", "帮我翻译这句话", "美国总统是谁", "今天真开心"]) {
+      expect(classifyMessage(message, paddleVocab, fresh).onTopic, message).toBe(false);
+    }
+  });
+
+  it("greets in Chinese, but only in a message short enough to be one", () => {
+    expect(classifyMessage("你好", paddleVocab, fresh)).toEqual({ onTopic: true, reason: "greeting" });
+    expect(classifyMessage("谢谢", paddleVocab, fresh)).toEqual({ onTopic: true, reason: "greeting" });
+    // Long enough to be a request, and it is one the store cannot answer.
+    expect(classifyMessage("你好，今天天气怎么样啊朋友", paddleVocab, fresh).onTopic).toBe(false);
+  });
+
+  it("takes a Chinese reply that only points back at what is on screen, once a conversation exists", () => {
+    expect(classifyMessage("这个", paddleVocab, ongoing)).toEqual({ onTopic: true, reason: "follow-up" });
+    expect(classifyMessage("第二个", paddleVocab, ongoing)).toEqual({ onTopic: true, reason: "follow-up" });
+    // The same words with no conversation behind them are a fresh request.
+    expect(classifyMessage("这个", paddleVocab, fresh).onTopic).toBe(false);
+  });
+
+  it("answers the assistant's own Chinese-language question", () => {
+    expect(classifyMessage("户外", paddleVocab, { hasHistory: true, awaitingAnswer: true })).toMatchObject({ onTopic: true });
+    expect(classifyMessage("户外", paddleVocab, { hasHistory: true, awaitingAnswer: false }).onTopic).toBe(false);
+  });
+
+  it("keeps blocking what it blocked before: an off-topic request wins even when it is a question", () => {
+    expect(classifyMessage("写一首关于球拍的诗", paddleVocab, ongoing)).toEqual({ onTopic: false, reason: "blocked-pattern" });
+  });
+});

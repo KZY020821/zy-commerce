@@ -321,3 +321,52 @@ describe("askConcierge — a product it talks about always gets a card", () => {
     expect(reply.products.map((p) => p.ref)).toEqual(["P-1", "P-2", "P-3", "P-4"]);
   });
 });
+
+describe("askConcierge — the product the customer is looking at", () => {
+  /** The system prompt of the first request the model received. */
+  const systemPrompt = (calls: unknown[]) => ((calls[0] as { messages: { role: string; content: string }[] }).messages[0]!.content);
+
+  it("tells the model which product is on screen, by name and reference", async () => {
+    const { model, calls } = scriptedModel([respondWith({ answer: "It suits beginners." })]);
+
+    await askConcierge({ store, adapter: makeAdapter(), model }, { message: "is this one good for a beginner?", history: [], viewing: "PAD-1" });
+
+    expect(systemPrompt(calls)).toContain('The customer is looking at "Atlas Control Paddle" (PAD-1) right now.');
+  });
+
+  it("says nothing when the host names a product this catalogue does not have", async () => {
+    const { model, calls } = scriptedModel([respondWith({ answer: "Which paddle do you mean?" })]);
+
+    await askConcierge({ store, adapter: makeAdapter(), model }, { message: "is this paddle any good?", history: [], viewing: "../../etc/passwd" });
+
+    expect(systemPrompt(calls)).not.toContain("The customer is looking at");
+  });
+
+  // "Is this any good?" names nothing a catalogue would recognise. On a
+  // product page it is obviously about the product on screen, and refusing it
+  // there is the most visible way this assistant can look stupid.
+  it("lets a question about the product on screen through the guard", async () => {
+    const { model } = scriptedModel([respondWith({ answer: "It is a beginner-friendly paddle." })]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "is this any good?", history: [], viewing: "PAD-1" });
+
+    expect(reply.origin).toMatchObject({ kind: "model" });
+  });
+
+  it("still refuses the same question asked from anywhere else", async () => {
+    const { model, calls } = scriptedModel([]);
+
+    const reply = await askConcierge({ store, adapter: makeAdapter(), model }, { message: "is this any good?", history: [] });
+
+    expect(reply.answer).toBe(OFF_TOPIC_REPLY);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("says nothing at all when the host passes no page", async () => {
+    const { model, calls } = scriptedModel([respondWith({ answer: "Happy to help." })]);
+
+    await askConcierge({ store, adapter: makeAdapter(), model }, { message: "show me paddles", history: [] });
+
+    expect(systemPrompt(calls)).not.toContain("The customer is looking at");
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currencyFractionDigits, formatMoney, specsToRecord, STOCK_LABELS, stockLabel, stockStatus } from "../src/format";
+import { currencyFractionDigits, formatMoney, specsToRecord, STOCK_LABELS, stockLabel, stockStatus, toProductCard } from "../src/format";
 
 /** Intl uses non-breaking spaces in some locales; compare on ordinary ones. */
 const plain = (s: string) => s.replace(/\u00a0|\u202f/g, " ");
@@ -63,5 +63,35 @@ describe("specsToRecord", () => {
 
   it("stringifies, trims, and drops empty values", () => {
     expect(specsToRecord({ Weight: 8, Core: " 16mm ", Blank: "   ", Missing: null })).toEqual({ Weight: "8", Core: "16mm" });
+  });
+});
+
+describe("toProductCard", () => {
+  it("renders a catalogue product the way the widget shows it", () => {
+    expect(
+      toProductCard(
+        { ref: "PAD-1", name: "Atlas", url: "/products/atlas", imageUrl: "https://img.test/a.png", price: 22090, priceFrom: true, stockQuantity: 2, lowStockThreshold: 5 },
+        { currency: "MYR", locale: "en-MY" },
+      ),
+    ).toEqual({
+      ref: "PAD-1",
+      name: "Atlas",
+      url: "/products/atlas",
+      imageUrl: "https://img.test/a.png",
+      price: 22090,
+      priceFrom: true,
+      priceLabel: formatMoney(22090, "MYR", "en-MY"),
+      stockLabel: "Low stock",
+    });
+  });
+
+  it("fills in what a sparse product leaves out", () => {
+    expect(toProductCard({ ref: "B-1", name: "Ball", price: 3090 }, { currency: "USD" })).toMatchObject({
+      url: null,
+      imageUrl: null,
+      priceFrom: false,
+      // No stock figure means stock is not tracked, not that it is sold out.
+      stockLabel: "In stock",
+    });
   });
 });

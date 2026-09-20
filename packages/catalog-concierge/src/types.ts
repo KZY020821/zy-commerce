@@ -105,6 +105,19 @@ export interface ProductCard {
   stockLabel: StockLabel;
 }
 
+/**
+ * One message of a conversation a host is putting back on screen.
+ *
+ * Hosts that keep history server-side build these from their own record; the
+ * widget renders them above the current conversation. See `loadHistory`.
+ */
+export interface RestoredMessage {
+  role: "user" | "assistant";
+  content: string;
+  suggestions?: string[];
+  products?: ProductCard[];
+}
+
 export type StockStatus = "in_stock" | "low_stock" | "out_of_stock";
 export type StockLabel = "In stock" | "Low stock" | "Sold out";
 

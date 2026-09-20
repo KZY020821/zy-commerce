@@ -78,7 +78,13 @@ export function trimHistory(history: { role: "user" | "assistant"; content: stri
   return kept;
 }
 
-export function buildSystemPrompt(ctx: AssistantStoreContext): string {
+/** The product the customer has open while they type, when the host knows it. */
+export interface ViewingContext {
+  ref: string;
+  name: string;
+}
+
+export function buildSystemPrompt(ctx: AssistantStoreContext, viewing?: ViewingContext): string {
   const money = (minor: number) => formatMoney(minor, ctx.currency, ctx.locale);
   return [
     `You are ${ctx.assistantName}, the product assistant for the online store "${ctx.storeName}". You help customers understand and choose between the store's products.`,
@@ -100,6 +106,9 @@ export function buildSystemPrompt(ctx: AssistantStoreContext): string {
     "Store catalogue overview (use category slugs with search_products):",
     renderCatalogProfile(ctx.profile, ctx.currency, money),
     "",
+    // The customer is asking from a product page; "is this one good for me?"
+    // has an obvious answer on screen and none at all in the message.
+    ...(viewing ? [`The customer is looking at "${viewing.name}" (${viewing.ref}) right now. If they say "this", "it" or "this one" without naming anything else, they mean that product. Open it with get_product before saying anything about it.`, ""] : []),
     `Store region: ${ctx.country ?? "unspecified"}. Answer in the customer's language.`,
   ].join("\n");
 }
@@ -111,6 +120,8 @@ interface RunOptions {
   tools: ToolContext;
   history: { role: "user" | "assistant"; content: string }[];
   userMessage: string;
+  /** Resolved by the caller against the catalogue; see `askConcierge`. */
+  viewing?: ViewingContext;
 }
 
 function isFunctionCall(call: OpenAI.Chat.Completions.ChatCompletionMessageToolCall): call is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall {
@@ -127,7 +138,7 @@ function safeParseArgs(raw: string): Record<string, unknown> {
 }
 
 export async function runAssistant(opts: RunOptions): Promise<AssistantReply> {
-  const system = buildSystemPrompt(opts.store);
+  const system = buildSystemPrompt(opts.store, opts.viewing);
   const history = trimHistory(opts.history).map<OpenAI.Chat.Completions.ChatCompletionMessageParam>((t) => ({ role: t.role, content: t.content }));
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [{ role: "system", content: system }, ...history, { role: "user", content: opts.userMessage }];
   const toolCalls: AssistantReply["toolCalls"] = [];

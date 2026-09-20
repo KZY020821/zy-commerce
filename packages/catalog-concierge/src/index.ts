@@ -15,6 +15,7 @@ export type {
   MinorUnits,
   ProductCard,
   ReplyOrigin,
+  RestoredMessage,
   StockLabel,
   StockStatus,
   StoreProfile,
@@ -34,7 +35,7 @@ export { buildStarterSuggestions } from "./starters";
 export { assistantTools, runAssistantTool, searchCatalogue, summariseCategories, type SearchFilters, type ToolContext } from "./tools";
 
 // The raw tool loop, for hosts that want to drive it themselves.
-export { buildSystemPrompt, runAssistant, trimHistory, MAX_HISTORY_CHARS, MAX_TOOL_ROUNDS, type AssistantReply, type AssistantStoreContext, type MessagesClient } from "./assistant";
+export { buildSystemPrompt, runAssistant, trimHistory, MAX_HISTORY_CHARS, MAX_TOOL_ROUNDS, type AssistantReply, type AssistantStoreContext, type MessagesClient, type ViewingContext } from "./assistant";
 
 // Model client resolution (any OpenAI-compatible endpoint).
 export { getModelClient, isAssistantConfigured, resolveModelConfig, DEFAULT_MODEL, type ModelConfig } from "./model";
@@ -44,4 +45,4 @@ export { extractSpecs, type ExtractSpecsInput } from "./extract-specs";
 export { htmlToLines, normalizeSpecKey, normalizeSpecs, parseLabelLines, parseTechSpecs, stripTags, type SpecSection } from "./spec-parse";
 
 // Formatting helpers used by the assistant, shared so hosts render identically.
-export { formatMoney, specsToRecord, stockLabel, stockStatus, STOCK_LABELS } from "./format";
+export { formatMoney, specsToRecord, stockLabel, stockStatus, toProductCard, STOCK_LABELS } from "./format";
