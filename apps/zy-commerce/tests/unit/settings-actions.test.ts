@@ -157,6 +157,7 @@ describe("updateAssistantAction — what the shop tells its assistant", () => {
     form.set("assistantName", "Fit Assistant");
     form.set("assistantGreeting", "Hi! Ask me anything.");
     form.set("assistantPolicies", "Delivery: free over RM 200.");
+    form.set("assistantSynonyms", "shoes, sneakers");
     form.set("supportWhatsapp", "+60 12-345 6789");
     for (const [key, value] of Object.entries(over)) form.set(key, value);
     return form;
@@ -178,6 +179,7 @@ describe("updateAssistantAction — what the shop tells its assistant", () => {
         assistantName: "Fit Assistant",
         assistantGreeting: "Hi! Ask me anything.",
         assistantPolicies: "Delivery: free over RM 200.",
+        assistantSynonyms: "shoes, sneakers",
         supportWhatsapp: "+60 12-345 6789",
       },
     });
@@ -185,10 +187,10 @@ describe("updateAssistantAction — what the shop tells its assistant", () => {
   });
 
   it("treats an empty box as no opinion, not as an empty greeting", async () => {
-    await updateAssistantAction(undefined, assistantForm({ assistantGreeting: "  ", assistantPolicies: "", supportWhatsapp: "" }));
+    await updateAssistantAction(undefined, assistantForm({ assistantGreeting: "  ", assistantPolicies: "", assistantSynonyms: "", supportWhatsapp: "" }));
 
     expect(db.tenant.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ assistantGreeting: null, assistantPolicies: null, supportWhatsapp: null }) }),
+      expect.objectContaining({ data: expect.objectContaining({ assistantGreeting: null, assistantPolicies: null, assistantSynonyms: null, supportWhatsapp: null }) }),
     );
   });
 

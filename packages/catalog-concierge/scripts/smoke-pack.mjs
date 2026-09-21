@@ -18,6 +18,7 @@ const work = mkdtempSync(join(tmpdir(), "concierge-pack-"));
 const run = (command, args, cwd) => execFileSync(command, args, { cwd, stdio: "inherit" });
 
 const check = `
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import * as core from "catalog-concierge";
 import * as ui from "catalog-concierge/react";
@@ -59,9 +60,15 @@ if (embedKb > 320) fail("the embed bundle has grown to " + embedKb + "KB");
 for (const needed of ["data-concierge-root", "attachShadow", "@property"]) {
   if (!embed.includes(needed)) fail("the embed bundle is missing " + needed);
 }
-for (const file of ["LICENSE", "README.md"]) {
+for (const file of ["LICENSE", "README.md", "CHANGELOG.md", "bin/catalog-concierge.mjs"]) {
   if (!existsSync(new URL("./node_modules/catalog-concierge/" + file, import.meta.url))) fail("the tarball has no " + file);
 }
+
+// The command a prospective client runs against their own catalogue, from the
+// installed package, exactly as npx catalog-concierge would.
+const cli = execFileSync("node", ["./node_modules/catalog-concierge/bin/catalog-concierge.mjs", "evaluate", "./catalogue.json", "--dry"], { encoding: "utf8" });
+if (!cli.includes("Catalogue: 1 products")) fail("the evaluate command did not read the catalogue: " + cli);
+if (!cli.includes("no specifications")) fail("the evaluate command did not report a product with nothing to say about it");
 console.log("✓ installed from the tarball: " + Object.keys(core).length + " exports, widget entry, types, a " + Math.round(css.length / 1024) + "KB stylesheet with no page reset, a " + embedKb + "KB script embed, LICENSE and README present");
 `;
 
@@ -76,6 +83,12 @@ try {
   writeFileSync(join(consumer, "package.json"), JSON.stringify({ name: "consumer", private: true, type: "module" }));
   run("npm", ["install", "--no-audit", "--no-fund", "--loglevel=error", join(work, tarball), "openai@^7", "zod@^4", "react@^19"], consumer);
   if (!existsSync(join(consumer, "node_modules", "catalog-concierge"))) throw new Error("the tarball did not install");
+
+  // A catalogue for the command to read, in the shape a client would export.
+  writeFileSync(
+    join(consumer, "catalogue.json"),
+    JSON.stringify([{ ref: "SKU-1", name: "Trail Runner", price: 12000, category: { slug: "shoes", name: "Shoes" } }]),
+  );
 
   writeFileSync(join(consumer, "check.mjs"), check);
   run("node", ["check.mjs"], consumer);

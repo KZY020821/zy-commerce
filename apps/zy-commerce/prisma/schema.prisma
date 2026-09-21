@@ -102,6 +102,10 @@ model Tenant {
   /// WhatsApp number in international format for the widget's handover to a
   /// person ("+60123456789"). Falls back to contactEmail when empty.
   supportWhatsapp   String?
+  /// Words customers use that this catalogue does not ("shoes" for a Footwear
+  /// category), comma separated. Without them the off-topic guard, which is
+  /// built from the catalogue itself, refuses the customer's own wording.
+  assistantSynonyms String?
 
   /// SHA-1 of the last imported catalogue file; lets the seed skip an unchanged import.
   catalogFingerprint String?

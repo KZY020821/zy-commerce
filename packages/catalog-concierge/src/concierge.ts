@@ -98,6 +98,7 @@ export async function* askConciergeStream(options: ConciergeOptions, input: AskI
       profile,
       productNames: catalogue.map((p) => p.name),
       brands: catalogue.map((p) => p.brand ?? "").filter(Boolean),
+      synonyms: options.store.synonyms,
     });
     // The assistant is built to ask one clarifying question at a time, so when
     // its last turn ended in a question the customer's short reply is the

@@ -315,3 +315,31 @@ describe("classifyMessage — a language written without spaces between words", 
     expect(classifyMessage("写一首关于球拍的诗", paddleVocab, ongoing)).toEqual({ onTopic: false, reason: "blocked-pattern" });
   });
 });
+
+describe("buildStoreVocabulary — the words customers use", () => {
+  /** A shop that says "Footwear" everywhere its customers say "shoes". */
+  const footwearProfile: CatalogProfile = {
+    productCount: 1,
+    categories: [{ slug: "footwear", name: "Footwear", productCount: 1, priceMin: 30000, priceMax: 60000, brands: ["Selkirk"], facets: [{ key: "Upper", coverage: 1, values: ["Knit"] }] }],
+  };
+
+  it("takes the shop's synonyms for things its catalogue calls something else", () => {
+    // A real one, found by `catalog-concierge evaluate` against the demo
+    // store: its category is "Footwear", and customers ask for shoes.
+    const withoutSynonyms = buildStoreVocabulary({ storeName: "Selkirk Demo", profile: footwearProfile, productNames: ["Selkirk Court Trainer"] });
+    expect(classifyMessage("do you sell shoes?", withoutSynonyms, fresh).onTopic).toBe(false);
+
+    const withSynonyms = buildStoreVocabulary({ storeName: "Selkirk Demo", profile: footwearProfile, productNames: ["Selkirk Court Trainer"], synonyms: ["shoes", "sneakers", "kicks"] });
+    expect(classifyMessage("do you sell shoes?", withSynonyms, fresh)).toEqual({ onTopic: true, reason: "catalogue-term" });
+    expect(classifyMessage("got any sneakers?", withSynonyms, fresh).onTopic).toBe(true);
+  });
+
+  it("holds a synonym to the same standard as any other word", () => {
+    const vocab = buildStoreVocabulary({ storeName: "Acme", profile: footwearProfile, productNames: ["Court Trainer"], synonyms: ["the", "2024", "kicks"] });
+
+    // Stopwords and bare numbers would let everything through.
+    expect(vocab.has("the")).toBe(false);
+    expect(vocab.has("2024")).toBe(false);
+    expect(vocab.has("kicks")).toBe(true);
+  });
+});

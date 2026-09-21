@@ -12,6 +12,7 @@
     "./embed": "./dist/embed.js"
   },
   "files": [
+    "bin",
     "dist",
     "src",
     "styles",
@@ -79,5 +80,8 @@
     "types": "./dist/index.d.ts",
     "main": "./dist/index.js"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "bin": {
+    "catalog-concierge": "./bin/catalog-concierge.mjs"
+  }
 }

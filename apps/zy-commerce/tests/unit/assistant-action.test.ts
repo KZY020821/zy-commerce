@@ -297,11 +297,20 @@ describe("askAssistantAction — what the shop says about itself", () => {
     expect(askConcierge).toHaveBeenCalledWith(expect.objectContaining({ store: expect.objectContaining({ policies: "Delivery: free over RM 200." }) }), expect.anything());
   });
 
+  it("passes the words customers use that the catalogue does not", async () => {
+    vi.mocked(requireCurrentTenant).mockResolvedValueOnce({ ...tenant, assistantSynonyms: "shoes, sneakers , " } as never);
+
+    await askAssistantAction({ message: "do you sell shoes?" });
+
+    expect(askConcierge).toHaveBeenCalledWith(expect.objectContaining({ store: expect.objectContaining({ synonyms: ["shoes", "sneakers"] }) }), expect.anything());
+  });
+
   it("passes none when the shop has written none, so the assistant keeps saying it doesn't know", async () => {
     await askAssistantAction({ message: "do you deliver to Sabah?" });
 
     const [options] = vi.mocked(askConcierge).mock.calls[0]!;
     expect("policies" in options.store).toBe(false);
+    expect("synonyms" in options.store).toBe(false);
   });
 });
 

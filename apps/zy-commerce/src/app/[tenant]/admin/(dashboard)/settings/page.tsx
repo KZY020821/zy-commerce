@@ -34,6 +34,7 @@ export default async function SettingsPage() {
             assistantName={tenant.assistantName}
             assistantGreeting={tenant.assistantGreeting}
             assistantPolicies={tenant.assistantPolicies}
+            assistantSynonyms={tenant.assistantSynonyms}
             supportWhatsapp={tenant.supportWhatsapp}
           />
         </CardContent>

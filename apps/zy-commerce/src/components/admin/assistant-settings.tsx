@@ -19,6 +19,7 @@ export interface AssistantSettingsProps {
   assistantName: string;
   assistantGreeting: string | null;
   assistantPolicies: string | null;
+  assistantSynonyms: string | null;
   supportWhatsapp: string | null;
 }
 
@@ -26,7 +27,7 @@ const POLICIES_PLACEHOLDER = `Delivery: free over RM 200, 2–4 working days wit
 Returns: 14 days, unused and in its packaging.
 Opening hours: Monday to Saturday, 10am–7pm.`;
 
-export function AssistantSettings({ assistantName, assistantGreeting, assistantPolicies, supportWhatsapp }: AssistantSettingsProps) {
+export function AssistantSettings({ assistantName, assistantGreeting, assistantPolicies, assistantSynonyms, supportWhatsapp }: AssistantSettingsProps) {
   const [state, action, pending] = useActionState(updateAssistantAction, undefined);
 
   return (
@@ -48,6 +49,14 @@ export function AssistantSettings({ assistantName, assistantGreeting, assistantP
         <Textarea id="assistantPolicies" name="assistantPolicies" defaultValue={assistantPolicies ?? ""} maxLength={4000} rows={7} placeholder={POLICIES_PLACEHOLDER} />
         <p className="text-xs text-muted-foreground">
           Delivery, returns, payment, opening hours — anything customers ask that is not about a product. The assistant may only state what is written here, word for word, and says it doesn&apos;t know about anything else.
+        </p>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="assistantSynonyms">Words your customers use</Label>
+        <Input id="assistantSynonyms" name="assistantSynonyms" defaultValue={assistantSynonyms ?? ""} maxLength={500} placeholder="shoes, sneakers, trainers" />
+        <p className="text-xs text-muted-foreground">
+          Comma separated. The assistant decides what is about your shop from your own product names and categories, so a customer asking for &ldquo;shoes&rdquo; when your category is &ldquo;Footwear&rdquo; is turned away. Add their word here and it counts as yours.
         </p>
       </div>
 

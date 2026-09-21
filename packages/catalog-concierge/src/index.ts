@@ -50,6 +50,13 @@ export { htmlToLines, normalizeSpecKey, normalizeSpecs, parseLabelLines, parseTe
 // that reading them per message hurts.
 export { cachedCatalogues, invalidateCatalogue, loadCatalogue, DEFAULT_CACHE_TTL_MS, type CatalogueCacheOptions } from "./catalogue-cache";
 
+// Running the assistant against a catalogue and reporting what happened.
+export { arrayAdapter, evaluateCatalogue, type Evaluation, type EvaluationOptions, type QuestionResult } from "./evaluate";
+
+// How much the assistant has to work with: specification coverage and the
+// products it will have least to say about.
+export { assessCatalogue, countSpecs, type CatalogueReadiness } from "./readiness";
+
 // What a turn cost, once a host supplies its provider's rates.
 export { estimateCost, replyUsage, totalUsage, type CostBreakdown, type TokenRates, type TokenUsage } from "./cost";
 

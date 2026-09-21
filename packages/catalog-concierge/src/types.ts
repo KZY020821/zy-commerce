@@ -75,6 +75,16 @@ export interface StoreProfile {
   /** ISO 3166-1 alpha-2. Helps the model with regional phrasing. */
   country?: string;
   /**
+   * Words your customers use that your catalogue does not.
+   *
+   * The off-topic guard is built from what the store actually sells, which
+   * makes it exact and a little literal: a shop whose category is "Footwear"
+   * refuses "do you sell shoes?". Put the customer's word here and it is
+   * treated as one of yours. `catalog-concierge evaluate` is how you find
+   * them — every refused question is a candidate.
+   */
+  synonyms?: string[];
+  /**
    * Free text of everything true about the shop that is not a product:
    * delivery, returns, opening hours, where it is.
    *

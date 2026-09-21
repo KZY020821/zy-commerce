@@ -9,6 +9,17 @@ exported from `catalog-concierge` and `catalog-concierge/react`, plus the
 
 ### Added
 
+- `catalog-concierge evaluate products.json` — run the assistant against a
+  catalogue export and report what it answered, what it refused, which
+  products it put forward, and what it cost. `assessCatalogue` measures how
+  much the catalogue gives it to work with.
+- `store.synonyms`: words customers use that the catalogue does not, so a shop
+  whose category is "Footwear" is not refusing "do you sell shoes?".
+- `cache: { key, ttlMs }` and `invalidateCatalogue(key)` for catalogues big
+  enough that reading them per message hurts, and `estimateCost(usage, rates)`
+  for what a turn cost.
+- `catalog-concierge/embed` — a `<script>` tag for sites that are not React,
+  mounting in a shadow root with the stylesheet inside it.
 - `catalog-concierge/styles.css`: a prebuilt stylesheet, so a host that does
   not run Tailwind — or would rather not scan a dependency — gets a styled
   widget from one import. It contains the widget's own classes and nothing

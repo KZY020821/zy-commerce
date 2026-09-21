@@ -41,6 +41,7 @@ const assistantSchema = z.object({
   assistantName: z.string().trim().min(1, "Give the assistant a name.").max(60, "Keep the name under 60 characters."),
   assistantGreeting: z.string().trim().max(300, "Keep the greeting under 300 characters."),
   assistantPolicies: z.string().trim().max(4000, "Keep the shop information under 4,000 characters."),
+  assistantSynonyms: z.string().trim().max(500, "Keep the customer words under 500 characters."),
   supportWhatsapp: z
     .string()
     .trim()
@@ -125,6 +126,7 @@ export async function updateAssistantAction(_prev: AssistantFormState, formData:
     assistantName: field(formData, "assistantName"),
     assistantGreeting: field(formData, "assistantGreeting"),
     assistantPolicies: field(formData, "assistantPolicies"),
+    assistantSynonyms: field(formData, "assistantSynonyms"),
     supportWhatsapp: field(formData, "supportWhatsapp"),
   });
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Please check the form and try again." };
@@ -140,6 +142,7 @@ export async function updateAssistantAction(_prev: AssistantFormState, formData:
       // generated greeting and the widget offers no contact at all.
       assistantGreeting: parsed.data.assistantGreeting || null,
       assistantPolicies: parsed.data.assistantPolicies || null,
+      assistantSynonyms: parsed.data.assistantSynonyms || null,
       supportWhatsapp: parsed.data.supportWhatsapp || null,
     },
   });

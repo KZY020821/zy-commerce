@@ -14,8 +14,8 @@ export default tseslint.config(
     },
   },
   {
-    // Build scripts run directly under Node.
-    files: ["scripts/**/*.mjs"],
+    // Build scripts and the CLI wrapper run directly under Node.
+    files: ["scripts/**/*.mjs", "bin/**/*.mjs"],
     languageOptions: { globals: { console: "readonly", process: "readonly" } },
   },
 );

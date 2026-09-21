@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { assessCatalogue } from "catalog-concierge";
+import { createPrismaCatalogAdapter } from "@/lib/ai/prisma-adapter";
 import { requireStoreAdmin } from "@/lib/auth/guards";
-import { assessCatalogue, countSpecs } from "@/lib/catalog/readiness";
 import { getTenantDb } from "@/lib/tenant/current";
 
 export const metadata: Metadata = { title: "Dashboard" };
@@ -11,18 +12,17 @@ export const metadata: Metadata = { title: "Dashboard" };
 export default async function AdminDashboardPage() {
   const { tenant } = await requireStoreAdmin(); // re-checked per page, not just in the layout (spec §9)
   const db = await getTenantDb();
-  const [products, categories, orders, customers, conversations, catalogueRows] = await Promise.all([
+  const [products, categories, orders, customers, conversations, catalogue] = await Promise.all([
     db.product.count(),
     db.category.count(),
     db.order.count(),
     db.customer.count(),
     db.chatConversation.count(),
-    // Everything the assistant can be asked about, and how much there is to say.
-    db.product.findMany({ where: { active: true }, select: { name: true, specs: true, description: true, _count: { select: { images: true } } } }),
+    // The same catalogue the assistant sees, judged by the same function it
+    // ships with — so this page cannot disagree with the package.
+    createPrismaCatalogAdapter(db).listCatalogue(),
   ]);
-  const readiness = assessCatalogue(
-    catalogueRows.map((p) => ({ name: p.name, specCount: countSpecs(p.specs), hasDescription: Boolean(p.description?.trim()), hasImage: p._count.images > 0 })),
-  );
+  const readiness = assessCatalogue(catalogue);
 
   return (
     <>
@@ -63,7 +63,7 @@ export default async function AdminDashboardPage() {
               <p className="mb-1 text-muted-foreground">Least to say about:</p>
               <ul className="space-y-1">
                 {readiness.thinnest.map((p) => (
-                  <li key={p.name} className="flex items-center justify-between gap-3 border-b py-1 last:border-0">
+                  <li key={p.ref} className="flex items-center justify-between gap-3 border-b py-1 last:border-0">
                     <span className="truncate">{p.name}</span>
                     <span className="shrink-0 text-muted-foreground">
                       {p.specCount === 0 ? "no specifications" : `${p.specCount} specifications`}

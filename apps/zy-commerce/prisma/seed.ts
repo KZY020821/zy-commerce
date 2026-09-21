@@ -38,6 +38,8 @@ interface DemoStore {
   assistantGreeting: string;
   /** Delivery, returns and opening hours, so the demo can answer them. */
   assistantPolicies: string;
+  /** What customers call things this catalogue calls something else. */
+  assistantSynonyms: string;
   contactEmail: string;
   adminEmail: string;
   currency: string;
@@ -61,6 +63,9 @@ const DEMO_STORES: DemoStore[] = [
       "Payment: online banking (FPX), credit and debit cards.",
       "Opening hours: Monday to Saturday, 10am to 7pm (MYT). This is a demonstration store — nothing here is really for sale.",
     ].join("\n"),
+    // Found by running `catalog-concierge evaluate` against this catalogue:
+    // its category is "Footwear", and customers ask for shoes.
+    assistantSynonyms: "shoes, sneakers, trainers, racket, racquet, bat, clothing, clothes, shirt, shorts, kit",
     contactEmail: "hello@demo.example.com",
     adminEmail: "admin@demo.example.com",
     currency: "MYR",
@@ -82,6 +87,7 @@ const DEMO_STORES: DemoStore[] = [
       "Payment: credit and debit cards.",
       "Opening hours: online only, orders ship Monday to Friday. This is a demonstration store — nothing here is really for sale.",
     ].join("\n"),
+    assistantSynonyms: "sneakers, trainers, kicks, clothing, clothes, kit, jersey",
     contactEmail: "hello@nike.example.com",
     adminEmail: "admin@nike.example.com",
     currency: "USD",
@@ -165,6 +171,7 @@ async function seedDemoStore(store: DemoStore) {
       assistantName,
       assistantGreeting,
       assistantPolicies: store.assistantPolicies,
+      assistantSynonyms: store.assistantSynonyms,
       contactEmail: store.contactEmail,
       currency: readEnv(`${p}_CURRENCY`, store.currency).toUpperCase(),
       country: readEnv(`${p}_COUNTRY`, store.country).toUpperCase(),
@@ -176,6 +183,7 @@ async function seedDemoStore(store: DemoStore) {
   // Filled in once, for stores created before there was anywhere to write it.
   // Never an overwrite: what the admin has typed is theirs.
   await db.tenant.updateMany({ where: { id: tenant.id, assistantPolicies: null }, data: { assistantPolicies: store.assistantPolicies } });
+  await db.tenant.updateMany({ where: { id: tenant.id, assistantSynonyms: null }, data: { assistantSynonyms: store.assistantSynonyms } });
 
   console.log(`✓ Tenant "${tenant.name}" ready at ${tenantOrigin(tenant.slug)}`);
 

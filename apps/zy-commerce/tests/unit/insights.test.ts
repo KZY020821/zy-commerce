@@ -5,7 +5,6 @@
  */
 import { describe, expect, it } from "vitest";
 import { summariseConversations } from "@/lib/ai/insights";
-import { assessCatalogue, countSpecs } from "@/lib/catalog/readiness";
 
 const thread = (...turns: Array<Record<string, unknown>>) => ({ messages: turns });
 
@@ -77,45 +76,6 @@ describe("summariseConversations", () => {
     expect(summariseConversations([])).toMatchObject({ conversations: 0, messages: 0, refused: 0, topQuestions: [], topProducts: [], unhelpful: [] });
     // A schemaless column can hold anything; it must not throw.
     expect(summariseConversations([{ messages: null }, { messages: "nonsense" }, thread({ role: "assistant", content: "orphan answer" })]).messages).toBe(1);
-  });
-});
-
-describe("assessCatalogue", () => {
-  const products = [
-    { name: "Atlas", specCount: 6, hasDescription: true, hasImage: true },
-    { name: "Vanguard", specCount: 4, hasDescription: true, hasImage: false },
-    { name: "Ball 6-pack", specCount: 0, hasDescription: false, hasImage: true },
-    { name: "Cap", specCount: 0, hasDescription: true, hasImage: true },
-  ];
-
-  it("measures what the assistant has to work with", () => {
-    expect(assessCatalogue(products)).toEqual({
-      products: 4,
-      withSpecs: 2,
-      withDescription: 3,
-      withImage: 3,
-      specCoverage: 50,
-      thinnest: [
-        { name: "Ball 6-pack", specCount: 0 },
-        { name: "Cap", specCount: 0 },
-        { name: "Vanguard", specCount: 4 },
-        { name: "Atlas", specCount: 6 },
-      ],
-    });
-  });
-
-  it("does not divide by an empty catalogue", () => {
-    expect(assessCatalogue([])).toMatchObject({ products: 0, specCoverage: 0, thinnest: [] });
-  });
-});
-
-describe("countSpecs", () => {
-  it("counts only the specifications that say something", () => {
-    expect(countSpecs({ Core: "16mm", Weight: "", Grip: null, Face: "Carbon" })).toBe(2);
-  });
-
-  it("treats anything that is not a map of values as none", () => {
-    for (const value of [null, undefined, "specs", 42, ["a", "b"]]) expect(countSpecs(value), String(value)).toBe(0);
   });
 });
 

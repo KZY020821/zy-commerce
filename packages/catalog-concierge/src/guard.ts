@@ -213,6 +213,8 @@ export interface VocabularySource {
   productNames: string[];
   /** Brand names not already visible in the profile's per-category brand lists. */
   brands?: string[];
+  /** Words the store's customers use that its catalogue does not. */
+  synonyms?: string[];
 }
 
 /**
@@ -243,6 +245,9 @@ export function buildStoreVocabulary(src: VocabularySource): Set<string> {
   }
   for (const name of src.productNames) add(name);
   for (const brand of src.brands ?? []) add(brand);
+  // What customers call these things, when the catalogue calls them something
+  // else. Same treatment as a product name: no stopwords, no bare numbers.
+  for (const synonym of src.synonyms ?? []) add(synonym);
   return vocab;
 }
 

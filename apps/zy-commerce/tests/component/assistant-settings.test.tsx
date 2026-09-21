@@ -17,6 +17,7 @@ const current = {
   assistantName: "Fit Assistant",
   assistantGreeting: "Hi! Ask me anything.",
   assistantPolicies: "Delivery: free over RM 200.",
+  assistantSynonyms: "shoes, sneakers",
   supportWhatsapp: "+60 12-345 6789",
 };
 
@@ -34,16 +35,18 @@ describe("AssistantSettings", () => {
     expect(field("Name").value).toBe("Fit Assistant");
     expect(field("Opening message").value).toBe("Hi! Ask me anything.");
     expect(field("Shop information").value).toBe("Delivery: free over RM 200.");
+    expect(field("Words your customers use").value).toBe("shoes, sneakers");
     expect(field("WhatsApp number").value).toBe("+60 12-345 6789");
   });
 
   it("starts empty for a store that has set nothing, and says what each box is for", () => {
-    render(<AssistantSettings assistantName="Product Assistant" assistantGreeting={null} assistantPolicies={null} supportWhatsapp={null} />);
+    render(<AssistantSettings assistantName="Product Assistant" assistantGreeting={null} assistantPolicies={null} assistantSynonyms={null} supportWhatsapp={null} />);
 
     expect(field("Opening message").value).toBe("");
     expect(field("Shop information").value).toBe("");
     expect(screen.getByText(/may only state what is written here/)).toBeTruthy();
     expect(screen.getByText(/a way to reach a person from the chat/)).toBeTruthy();
+    expect(screen.getByText(/counts as yours/)).toBeTruthy();
   });
 
   it("sends every field to the server and shows what it says", async () => {

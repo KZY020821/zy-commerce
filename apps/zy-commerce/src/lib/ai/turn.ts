@@ -136,6 +136,7 @@ export async function beginTurn(raw: unknown, options: { crossSite?: boolean } =
 
 /** The store profile the package is handed, including the shop's own words. */
 export function storeProfile(tenant: Tenant) {
+  const synonyms = (tenant.assistantSynonyms ?? "").split(",").map((word) => word.trim()).filter(Boolean);
   return {
     storeName: tenant.name,
     assistantName: tenant.assistantName,
@@ -145,6 +146,8 @@ export function storeProfile(tenant: Tenant) {
     // Delivery, returns, opening hours: the questions a catalogue cannot
     // answer, in the shop's own words.
     ...(tenant.assistantPolicies ? { policies: tenant.assistantPolicies } : {}),
+    // What customers call things this catalogue calls something else.
+    ...(synonyms.length ? { synonyms } : {}),
   };
 }
 

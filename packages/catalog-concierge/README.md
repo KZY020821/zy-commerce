@@ -270,6 +270,50 @@ The widget has no design-system dependency. It uses Tailwind utility classes and
 
 > **Styling is one line, either way.** With Tailwind, `@source` the package so it generates the widget's classes (in a monorepo, the relative path: `@source "../../../../packages/catalog-concierge/src";`). Without it, `import "catalog-concierge/styles.css"`. Skip both and the widget renders unstyled — most visibly, it loses its fixed positioning and appears in the top-left corner. See **Installing it** above.
 
+### Trying it on your own catalogue
+
+Before anyone pays for this, they should see it answer their own customers'
+questions about their own products:
+
+```bash
+npx catalog-concierge evaluate products.json --store "Acme" --currency MYR \
+  --questions questions.txt --rates 0.28,0.42,0.028
+```
+
+`products.json` is an array of the same product shape the adapter returns —
+`ref`, `name`, `price` in minor units, and specs. No database, no application,
+nothing from the shop's own codebase. It prints what the catalogue can support,
+then every question with the answer, the products it put forward, the tools it
+used, the tokens and the time:
+
+```
+Catalogue: 192 products
+  with specifications : 189 (98%), 4.9 on average
+  least to say about  : Realistic Pickleball Board Game    no specifications
+
+? which paddle should I buy as a beginner with tennis elbow?
+  For tennis elbow, the two things that matter most are core thickness…
+  products: SLK-160, SLK-156 · tools: search_products · 8313 tokens · 3776ms · 0.0014
+
+? do you sell shoes?
+  REFUSED by the off-topic guard — no model call. If your customers ask this,
+  the word they used is not one your catalogue uses: add it with --synonyms…
+
+2 of 4 answered, 2 refused, 0 answered without naming a product.
+22459 tokens (14720 from cache), median 1890ms per question, 0.0028 total.
+```
+
+`--dry` reports the catalogue without calling a model at all, and `--json`
+gives the whole evaluation for a script to read.
+
+**Every refused question is a finding.** The one above is real: that shop's
+category is *Footwear*, and its customers say *shoes*. Put their word in
+`store.synonyms` (or `--synonyms shoes,sneakers`) and it counts as one of
+yours — the same question then answers, with a card.
+
+`assessCatalogue(catalogue)` is the same measurement on its own, for a shop
+owner's dashboard.
+
 ### Big catalogues, and what a turn costs
 
 `listCatalogue()` runs for every message: one read serves the store map, the
