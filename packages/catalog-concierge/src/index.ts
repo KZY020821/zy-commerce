@@ -46,6 +46,13 @@ export { getModelClient, isAssistantConfigured, resolveModelConfig, DEFAULT_MODE
 export { extractSpecs, type ExtractSpecsInput } from "./extract-specs";
 export { htmlToLines, normalizeSpecKey, normalizeSpecs, parseLabelLines, parseTechSpecs, stripTags, type SpecSection } from "./spec-parse";
 
+// Reusing a catalogue snapshot between messages, for catalogues big enough
+// that reading them per message hurts.
+export { cachedCatalogues, invalidateCatalogue, loadCatalogue, DEFAULT_CACHE_TTL_MS, type CatalogueCacheOptions } from "./catalogue-cache";
+
+// What a turn cost, once a host supplies its provider's rates.
+export { estimateCost, replyUsage, totalUsage, type CostBreakdown, type TokenRates, type TokenUsage } from "./cost";
+
 // Talking to a host's own streaming endpoint (newline-delimited JSON).
 export { askEndpoint, askEndpointStream, parseStreamLine, readAssistantStream } from "./transport";
 

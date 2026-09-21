@@ -37,6 +37,8 @@ export interface StoredTurn {
   blocked?: string;
   /** What the customer thought of this answer, if they said. */
   rating?: "up" | "down";
+  /** What the turn cost in tokens. Absent when the guard answered for free. */
+  usage?: { inputTokens: number; outputTokens: number; cachedInputTokens: number };
 }
 
 /** Reads the `messages` JSON column defensively — it is schemaless by design. */

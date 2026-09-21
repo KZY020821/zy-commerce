@@ -189,6 +189,19 @@ describe("askAssistantAction — what is recorded", () => {
     expect(updated.data.messages).toHaveLength(4);
   });
 
+  it("records what the turn cost in tokens, and nothing when the guard answered", async () => {
+    vi.mocked(askConcierge).mockResolvedValueOnce({ ...modelReply, usage: { inputTokens: 1200, outputTokens: 180, cachedInputTokens: 900 } });
+    await askAssistantAction({ message: "which paddle?" });
+    const paid = db.chatConversation.create.mock.calls[0]![0] as { data: { messages: Array<Record<string, unknown>> } };
+    expect(paid.data.messages[1]).toMatchObject({ usage: { inputTokens: 1200, outputTokens: 180, cachedInputTokens: 900 } });
+
+    db.chatConversation.create.mockClear();
+    vi.mocked(askConcierge).mockResolvedValueOnce({ answer: "It seems like…", suggestions: [], products: [], origin: { kind: "blocked", reason: "no-signal" } });
+    await askAssistantAction({ message: "give me a haiku" });
+    const free = db.chatConversation.create.mock.calls[0]![0] as { data: { messages: Array<Record<string, unknown>> } };
+    expect(free.data.messages[1]).not.toHaveProperty("usage");
+  });
+
   it("records why each product was shown, so a restored conversation still says it", async () => {
     vi.mocked(askConcierge).mockResolvedValueOnce({
       ...modelReply,

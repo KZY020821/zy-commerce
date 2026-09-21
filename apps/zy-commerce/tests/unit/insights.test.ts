@@ -49,6 +49,21 @@ describe("summariseConversations", () => {
     ]);
   });
 
+  it("adds up what the conversations cost in tokens", () => {
+    const insights = summariseConversations([
+      thread(
+        { role: "user", content: "which paddle?" },
+        { role: "assistant", content: "The Atlas.", usage: { inputTokens: 1200, outputTokens: 180, cachedInputTokens: 900 } },
+        { role: "user", content: "write me a poem" },
+        // Refused by the guard: no model call, so nothing to count.
+        { role: "assistant", content: "It seems like…", blocked: "blocked-pattern" },
+      ),
+      thread({ role: "user", content: "and the other?" }, { role: "assistant", content: "The Vanguard.", usage: { inputTokens: 800, outputTokens: 120, cachedInputTokens: 700 } }),
+    ]);
+
+    expect(insights.usage).toEqual({ inputTokens: 2000, outputTokens: 300, cachedInputTokens: 1600 });
+  });
+
   it("gathers the ratings, and the exchanges marked unhelpful with their question", () => {
     const insights = summariseConversations(threads);
 

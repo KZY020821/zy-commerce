@@ -6,6 +6,7 @@
  * down?" — which is what decides whether they keep paying for this. Pure
  * functions over the stored turns, so they are tested without a database.
  */
+import { totalUsage, type TokenUsage } from "catalog-concierge";
 import { storedTurns } from "./chat-history";
 
 export interface Counted {
@@ -34,6 +35,8 @@ export interface ConversationInsights {
   topProducts: { sku: string; count: number }[];
   /** The exchanges customers marked as unhelpful, most recent first. */
   unhelpful: UnhelpfulExchange[];
+  /** What these conversations cost the store, in tokens. */
+  usage: TokenUsage;
 }
 
 /** How many of each list is worth reading at a glance. */
@@ -62,6 +65,7 @@ export function summariseConversations(threads: { messages: unknown }[]): Conver
   const refusedQuestions = new Map<string, Counted>();
   const products = new Map<string, number>();
   const unhelpful: UnhelpfulExchange[] = [];
+  const usages: Array<TokenUsage | undefined> = [];
   let messages = 0;
   let refused = 0;
   let ratedUp = 0;
@@ -75,6 +79,8 @@ export function summariseConversations(threads: { messages: unknown }[]): Conver
       if (turn.role !== "assistant") return;
       // The message this answered: the question a shop owner wants to read.
       const asked = i > 0 && turns[i - 1]!.role === "user" ? turns[i - 1]!.content : "";
+
+      usages.push(turn.usage);
 
       if (turn.blocked) {
         refused += 1;
@@ -101,5 +107,6 @@ export function summariseConversations(threads: { messages: unknown }[]): Conver
     refusedQuestions: rank(refusedQuestions),
     topProducts: [...products.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, TOP).map(([sku, count]) => ({ sku, count })),
     unhelpful: unhelpful.slice(-UNHELPFUL).reverse(),
+    usage: totalUsage(usages),
   };
 }

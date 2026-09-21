@@ -16,6 +16,12 @@ interface LoggedTurn {
   rating?: "up" | "down";
 }
 
+/** Tokens as a shop owner would read them: 1,240 or 1.2M, never 1240000. */
+function tokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  return count.toLocaleString("en-US");
+}
+
 /** A ranked list, or nothing at all when there is nothing to rank. */
 function Ranked({ title, description, items }: { title: string; description: string; items: { text: string; count: number }[] }) {
   if (items.length === 0) return null;
@@ -83,8 +89,10 @@ export default async function ConversationsPage() {
             </Card>
             <Card>
               <CardContent className="pt-6">
-                <p className="text-2xl font-semibold">{insights.topProducts.length}</p>
-                <p className="text-sm text-muted-foreground">products it recommended</p>
+                <p className="text-2xl font-semibold">{tokens(insights.usage.inputTokens + insights.usage.outputTokens)}</p>
+                <p className="text-sm text-muted-foreground">
+                  tokens used{insights.usage.cachedInputTokens > 0 ? `, ${tokens(insights.usage.cachedInputTokens)} from cache` : ""}
+                </p>
               </CardContent>
             </Card>
           </div>

@@ -168,6 +168,9 @@ export async function recordTurn(turn: PreparedTurn, reply: ConciergeReply): Pro
         ...(reply.products.some((p) => p.note) ? { productNotes: reply.products.map((p) => p.note ?? "") } : {}),
         toolCalls: reply.origin.kind === "model" ? reply.origin.toolCalls : [],
         ...(reply.origin.kind === "blocked" ? { blocked: reply.origin.reason } : {}),
+        // What this turn cost. Without it nobody can answer what a
+        // conversation costs — the store owner or whoever is pricing this.
+        ...(reply.usage ? { usage: reply.usage } : {}),
       },
     ];
     const messages = appendTurns(turn.previous, added) as unknown as Prisma.InputJsonValue;

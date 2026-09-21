@@ -270,6 +270,40 @@ The widget has no design-system dependency. It uses Tailwind utility classes and
 
 > **Styling is one line, either way.** With Tailwind, `@source` the package so it generates the widget's classes (in a monorepo, the relative path: `@source "../../../../packages/catalog-concierge/src";`). Without it, `import "catalog-concierge/styles.css"`. Skip both and the widget renders unstyled — most visibly, it loses its fixed positioning and appears in the top-left corner. See **Installing it** above.
 
+### Big catalogues, and what a turn costs
+
+`listCatalogue()` runs for every message: one read serves the store map, the
+guard and every search, so the assistant can never answer from data older than
+the question. That is the right trade up to a few thousand products, and it is
+the default.
+
+Past that, opt into a snapshot:
+
+```ts
+await askConcierge({ store, adapter, cache: { key: storeId, ttlMs: 60_000 } }, { message, history });
+
+// …and drop it the moment the catalogue changes, so a long window stays safe
+invalidateCatalogue(storeId);
+```
+
+The key is the store, never shared between tenants — it is the only thing
+keeping their catalogues apart — and at most 32 stores are held, coldest
+evicted first. The trade is stated plainly: within the window, stock levels and
+prices can be that stale.
+
+Every reply carries `usage` (input, output and cached input tokens). Rates are
+yours to supply, because they differ per provider and change without notice:
+
+```ts
+import { estimateCost, replyUsage } from "catalog-concierge";
+
+// DeepSeek's published rates at the time of writing, as an example only.
+const cost = estimateCost(replyUsage(reply), { inputPerMillion: 0.28, outputPerMillion: 0.42, cachedInputPerMillion: 0.028 });
+```
+
+Cached input is billed at its own rate and never billed twice. A turn the guard
+answered costs nothing, and says so.
+
 ### Specifications are what make it good
 
 `specs` is a flat map of strings. The richer it is, the better the assistant performs: it powers the follow-up questions, the comparisons and the spec-value search. A product with no specs is still found and recommended by name and price, it just cannot be compared on detail.

@@ -12,6 +12,7 @@
  * rate limiting, logging. Everything below it is the assistant.
  */
 import { drain, runAssistantEvents, type AssistantEvent, type AssistantReply, type MessagesClient } from "./assistant";
+import { loadCatalogue, type CatalogueCacheOptions } from "./catalogue-cache";
 import { toProductCard } from "./format";
 import { buildStoreVocabulary, classifyMessage, isQuestion, OFF_TOPIC_REPLY } from "./guard";
 import { getModelClient } from "./model";
@@ -32,6 +33,11 @@ export interface ConciergeOptions {
    * decided the message is in scope — otherwise unrelated questions cost money.
    */
   disableTopicGuard?: boolean;
+  /**
+   * Reuse the catalogue snapshot between messages instead of reading it for
+   * each one. Off by default; see `catalogue-cache.ts` for the trade.
+   */
+  cache?: CatalogueCacheOptions;
 }
 
 export interface AskInput {
@@ -75,8 +81,10 @@ export async function* askConciergeStream(options: ConciergeOptions, input: AskI
   if (!resolved) throw new ConciergeNotConfiguredError();
 
   // One read of the catalogue serves the map, the guard and every search this
-  // turn — so the assistant can never answer from data older than this message.
-  const catalogue = await options.adapter.listCatalogue();
+  // turn — so the assistant can never answer from data older than this
+  // message, unless the host has opted into a cache and said how stale it is
+  // willing to be.
+  const catalogue = await loadCatalogue(options.adapter, options.cache);
   const profile = buildCatalogProfile(catalogue);
   const starters = buildStarterSuggestions(profile.categories.map((c) => c.name));
 
