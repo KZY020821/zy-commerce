@@ -52,3 +52,52 @@
   --color-ring: var(--ring, oklch(0.705 0.015 286.067));
   --color-destructive: var(--destructive, oklch(0.577 0.245 27.325));
 }
+
+/**
+ * The few browser defaults the widget cannot live with, scoped to its own two
+ * roots so nothing else on the page can be touched.
+ *
+ * A Tailwind host gets these from its own preflight; this stylesheet ships
+ * without one on purpose, and without this the widget would render browser
+ * blue underlined links and Arial buttons inside an otherwise styled panel.
+ * `base` sits below `utilities`, so every Tailwind class still wins.
+ */
+@layer base {
+  .concierge-widget,
+  .concierge-widget *,
+  .concierge-widget *::before,
+  .concierge-widget *::after {
+    box-sizing: border-box;
+  }
+
+  .concierge-widget a {
+    color: inherit;
+    text-decoration: inherit;
+  }
+
+  .concierge-widget button,
+  .concierge-widget textarea {
+    font: inherit;
+    color: inherit;
+    letter-spacing: inherit;
+    margin: 0;
+  }
+
+  .concierge-widget button {
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .concierge-widget textarea {
+    border: 0;
+    background: none;
+  }
+
+  .concierge-widget img,
+  .concierge-widget svg {
+    display: block;
+    max-width: 100%;
+  }
+}

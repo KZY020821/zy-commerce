@@ -9,25 +9,24 @@
  * Every word it says comes from `labels`, so a store that sells in Malay or
  * Chinese can translate the interface without forking the component.
  *
+ * Both roots carry `concierge-widget`, which the prebuilt stylesheet uses to
+ * scope its handful of base rules — a host without Tailwind's preflight would
+ * otherwise get browser-default blue underlined links and Arial buttons inside
+ * the widget, and nothing outside it may be touched to fix that.
+ *
  * Styling uses Tailwind utility classes and the CSS custom properties that
  * shadcn/ui and most Tailwind setups already define: --primary, --background,
  * --muted and friends. A project without them still renders a usable widget,
  * just in the browser default palette.
  */
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, useTransition, type ReactNode } from "react";
-import type { ConversationTurn, ProductCard, RestoredMessage, StockLabel } from "../types";
+import type { AssistantAnswer, AssistantStreamEvent, ConversationTurn, ProductCard, RestoredMessage, StockLabel } from "../types";
 
-export type WidgetSendResult =
-  | { ok: true; answer: string; suggestions: string[]; products: ProductCard[] }
-  | { ok: false; error: string };
+/** Kept as the widget's own names for shapes that live in `types.ts`. */
+export type WidgetSendResult = AssistantAnswer;
+export type WidgetStreamEvent = AssistantStreamEvent;
 
 export type { RestoredMessage };
-
-/**
- * What a streaming host reports while a reply is being put together: the
- * tools the assistant is using, then the finished reply.
- */
-export type WidgetStreamEvent = { kind: "tool"; name: string } | { kind: "reply"; result: WidgetSendResult };
 
 /** Every fixed string the widget shows. Override any subset through `labels`. */
 export interface WidgetLabels {
@@ -466,7 +465,7 @@ export function ConciergeWidget({
         type="button"
         onClick={() => setOpen(true)}
         aria-expanded={false}
-        className="fixed right-4 bottom-[max(1rem,env(safe-area-inset-bottom))] z-40 flex items-center gap-2 rounded-full bg-primary py-3 pr-5 pl-4 text-sm font-medium text-primary-foreground shadow-lg transition hover:opacity-90 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+        className="concierge-widget fixed right-4 bottom-[max(1rem,env(safe-area-inset-bottom))] z-40 flex items-center gap-2 rounded-full bg-primary py-3 pr-5 pl-4 text-sm font-medium text-primary-foreground shadow-lg transition hover:opacity-90 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
       >
         <ChatIcon />
         <span>{text.launcher.replace("{name}", assistantName)}</span>
@@ -485,7 +484,7 @@ export function ConciergeWidget({
         if (e.key === "Escape") setOpen(false);
         if (e.key === "Tab") trapFocus(e);
       }}
-      className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-background text-foreground sm:inset-auto sm:right-4 sm:bottom-4 sm:h-[min(640px,calc(100dvh-2rem))] sm:w-[420px] sm:rounded-2xl sm:border sm:shadow-2xl"
+      className="concierge-widget fixed inset-0 z-50 flex flex-col overflow-hidden bg-background text-foreground sm:inset-auto sm:right-4 sm:bottom-4 sm:h-[min(640px,calc(100dvh-2rem))] sm:w-[420px] sm:rounded-2xl sm:border sm:shadow-2xl"
     >
       <header className="flex items-center gap-3 border-b px-4 py-3">
         <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">

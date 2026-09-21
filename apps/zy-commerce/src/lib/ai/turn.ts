@@ -45,17 +45,31 @@ export const askInputSchema = z.object({
 
 export type AskInputShape = z.input<typeof askInputSchema>;
 
-/** The anonymous thread's cookie: 30 days, never readable by page scripts. */
-export function sessionCookieOptions() {
-  return { httpOnly: true, sameSite: "lax" as const, secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 * 24 * 30 };
+/**
+ * The anonymous thread's cookie: 30 days, never readable by page scripts.
+ *
+ * `lax` on our own storefront. For the widget embedded on someone else's site
+ * the browser would drop a `lax` cookie altogether, and the assistant would
+ * forget the conversation between every message — so an allowed embed gets
+ * `None; Secure` instead, and the route only ever allows an origin the store
+ * listed itself.
+ */
+export function sessionCookieOptions(crossSite = false) {
+  return {
+    httpOnly: true,
+    sameSite: crossSite ? ("none" as const) : ("lax" as const),
+    secure: crossSite || process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  };
 }
 
-export async function getOrCreateSessionToken(): Promise<string> {
+export async function getOrCreateSessionToken(crossSite = false): Promise<string> {
   const jar = await cookies();
   const existing = jar.get(SESSION_COOKIE)?.value;
   if (existing && /^[a-f0-9]{32}$/.test(existing)) return existing;
   const token = randomBytes(16).toString("hex");
-  jar.set(SESSION_COOKIE, token, sessionCookieOptions());
+  jar.set(SESSION_COOKIE, token, sessionCookieOptions(crossSite));
   return token;
 }
 
@@ -80,7 +94,7 @@ export type TurnStart = { ok: true; turn: PreparedTurn } | { ok: false; error: s
  * Everything that happens before the model: validate, resolve the store, rate
  * limit, read the thread, and work out what the customer is looking at.
  */
-export async function beginTurn(raw: unknown): Promise<TurnStart> {
+export async function beginTurn(raw: unknown, options: { crossSite?: boolean } = {}): Promise<TurnStart> {
   const parsed = askInputSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: `Please enter a message (up to ${MAX_MESSAGE_CHARS} characters).` };
 
@@ -90,7 +104,7 @@ export async function beginTurn(raw: unknown): Promise<TurnStart> {
 
   const h = await headers();
   const ip = clientIpFromHeaders(h);
-  const sessionToken = await getOrCreateSessionToken();
+  const sessionToken = await getOrCreateSessionToken(options.crossSite);
   if (!checkRateLimit(`chat:ip:${ip}`, RATE_PER_IP).ok || !checkRateLimit(`chat:session:${sessionToken}`, RATE_PER_SESSION).ok) {
     return { ok: false, error: "You're sending messages quickly — please wait a few minutes and try again." };
   }

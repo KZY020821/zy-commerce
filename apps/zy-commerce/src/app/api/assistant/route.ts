@@ -8,13 +8,15 @@
  * It is a Route Handler rather than a Server Action on purpose (the app's one
  * exception to "Route Handlers are for webhooks and Auth.js"): actions are
  * queued one at a time per client and their result arrives in a single piece,
- * neither of which suits a long reply a customer is watching. Everything a
- * turn needs is shared with the action through `src/lib/ai/turn.ts`, so the
- * two cannot drift apart.
+ * neither of which suits a long reply a customer is watching — and a Server
+ * Action cannot be called from another site at all, which the `<script>`
+ * embed must do. Everything a turn needs is shared with the action through
+ * `src/lib/ai/turn.ts`, so the two cannot drift apart.
  */
 import { headers } from "next/headers";
 import { askConciergeStream } from "catalog-concierge";
 import { beginTurn, customerFacingError, recordTurn, storeProfile } from "@/lib/ai/turn";
+import { allowedEmbedOrigin, originVerdict } from "@/lib/ai/embed-origins";
 import { requestHost } from "@/lib/tenant/resolve";
 
 /** The tool loop can take a while; the platform's default is not enough. */
@@ -24,7 +26,7 @@ export const maxDuration = 60;
 const encoder = new TextEncoder();
 const line = (event: unknown) => encoder.encode(`${JSON.stringify(event)}\n`);
 
-const STREAM_HEADERS = {
+const STREAM_HEADERS: Record<string, string> = {
   "content-type": "application/x-ndjson; charset=utf-8",
   "cache-control": "no-store",
   "x-content-type-options": "nosniff",
@@ -32,20 +34,41 @@ const STREAM_HEADERS = {
   "x-accel-buffering": "no",
 };
 
+/** Cross-origin headers for an embed the store has listed, and nothing else. */
+function corsHeaders(origin: string | null): Record<string, string> {
+  if (!origin) return {};
+  return {
+    "access-control-allow-origin": origin,
+    "access-control-allow-credentials": "true",
+    "access-control-allow-headers": "content-type",
+    "access-control-allow-methods": "POST, OPTIONS",
+    "access-control-max-age": "86400",
+    vary: "origin",
+  };
+}
+
 /** A refusal, in the same shape the stream ends with. */
-function refusal(error: string): Response {
-  return new Response(line({ type: "reply", result: { ok: false, error } }), { headers: STREAM_HEADERS });
+function refusal(error: string, cors: Record<string, string> = {}): Response {
+  return new Response(line({ type: "reply", result: { ok: false, error } }), { headers: { ...STREAM_HEADERS, ...cors } });
+}
+
+/** The browser's preflight for an embed on another site. */
+export async function OPTIONS(request: Request): Promise<Response> {
+  const origin = allowedEmbedOrigin(request.headers.get("origin"));
+  return new Response(null, { status: origin ? 204 : 403, headers: corsHeaders(origin) });
 }
 
 export async function POST(request: Request): Promise<Response> {
   // A Server Action checks this for itself; a route handler has to. The chat
-  // is anonymous, so without it another site could spend a visitor's quota.
-  const origin = request.headers.get("origin");
-  if (origin && originHost(origin) !== requestHost(await headers())) return refusal("This request did not come from the store.");
+  // is anonymous, so without it another site could spend a visitor's quota —
+  // and only a site the store listed may embed it at all.
+  const verdict = originVerdict(request.headers.get("origin"), requestHost(await headers()));
+  if (verdict.kind === "refused") return refusal("This request did not come from the store.");
+  const cors = corsHeaders(verdict.kind === "embedded" ? verdict.origin : null);
 
   const body: unknown = await request.json().catch(() => null);
-  const started = await beginTurn(body);
-  if (!started.ok) return refusal(started.error);
+  const started = await beginTurn(body, { crossSite: verdict.kind === "embedded" });
+  if (!started.ok) return refusal(started.error, cors);
   const turn = started.turn;
 
   const stream = new ReadableStream<Uint8Array>({
@@ -73,13 +96,5 @@ export async function POST(request: Request): Promise<Response> {
     },
   });
 
-  return new Response(stream, { headers: STREAM_HEADERS });
-}
-
-function originHost(origin: string): string | null {
-  try {
-    return new URL(origin).host;
-  } catch {
-    return null;
-  }
+  return new Response(stream, { headers: { ...STREAM_HEADERS, ...cors } });
 }

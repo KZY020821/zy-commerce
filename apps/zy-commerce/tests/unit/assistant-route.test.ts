@@ -8,6 +8,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("next/headers", () => ({ headers: vi.fn(), cookies: vi.fn() }));
 vi.mock("@/lib/tenant/current", () => ({ requireCurrentTenant: vi.fn(), getTenantDb: vi.fn() }));
 vi.mock("@/lib/ai/prisma-adapter", () => ({ createPrismaCatalogAdapter: vi.fn(() => ({ fakeAdapter: true })) }));
+// Which sites may embed this store's assistant, without a whole environment.
+vi.mock("@/lib/env", () => ({ env: () => ({ ASSISTANT_ALLOWED_ORIGINS: "https://client.example" }), isProduction: () => false }));
 vi.mock("catalog-concierge", async (importOriginal) => ({
   ...(await importOriginal<typeof import("catalog-concierge")>()),
   askConciergeStream: vi.fn(),
@@ -16,7 +18,7 @@ vi.mock("catalog-concierge", async (importOriginal) => ({
 
 import { askConciergeStream, isAssistantConfigured, type ConciergeEvent, type ConciergeReply } from "catalog-concierge";
 import { cookies, headers } from "next/headers";
-import { POST } from "@/app/api/assistant/route";
+import { OPTIONS, POST } from "@/app/api/assistant/route";
 import { rateLimitStore } from "@/lib/auth/rate-limit";
 import { getTenantDb, requireCurrentTenant } from "@/lib/tenant/current";
 
@@ -90,12 +92,34 @@ describe("POST /api/assistant — answering as it works", () => {
     expect(askConciergeStream).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ viewing: "PAD-1" }));
   });
 
-  it("refuses a request from another site before doing any work", async () => {
+  it("refuses a request from a site the store has not listed, before doing any work", async () => {
     const response = await ask({ message: "which paddle?" }, { headers: { origin: "https://evil.example" } });
 
     expect(await lines(response)).toEqual([{ type: "reply", result: { ok: false, error: "This request did not come from the store." } }]);
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
     expect(requireCurrentTenant).not.toHaveBeenCalled();
     expect(askConciergeStream).not.toHaveBeenCalled();
+  });
+
+  // The <script> embed lives on the client's own site, so the answer has to
+  // carry cross-origin headers and the thread has to survive between messages.
+  it("answers a site the store listed, with the headers a browser needs", async () => {
+    const response = await ask({ message: "which paddle?" }, { headers: { origin: "https://client.example" } });
+
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://client.example");
+    expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(response.headers.get("vary")).toBe("origin");
+    expect(await lines(response)).toHaveLength(2);
+  });
+
+  it("answers the browser's preflight for a listed site, and refuses one for anybody else", async () => {
+    const allowed = await OPTIONS(new Request("http://demo.localhost:3000/api/assistant", { method: "OPTIONS", headers: { origin: "https://client.example" } }));
+    expect(allowed.status).toBe(204);
+    expect(allowed.headers.get("access-control-allow-methods")).toBe("POST, OPTIONS");
+
+    const refused = await OPTIONS(new Request("http://demo.localhost:3000/api/assistant", { method: "OPTIONS", headers: { origin: "https://evil.example" } }));
+    expect(refused.status).toBe(403);
+    expect(refused.headers.get("access-control-allow-origin")).toBeNull();
   });
 
   it("refuses an Origin that is not even a URL", async () => {

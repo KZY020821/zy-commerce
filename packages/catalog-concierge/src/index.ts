@@ -6,6 +6,8 @@
  */
 export { askConcierge, askConciergeStream, conciergeStarters, ConciergeNotConfiguredError, type AskInput, type ConciergeEvent, type ConciergeOptions } from "./concierge";
 export type {
+  AssistantAnswer,
+  AssistantStreamEvent,
   CatalogAdapter,
   CatalogueProduct,
   CatalogueProductDetail,
@@ -43,6 +45,9 @@ export { getModelClient, isAssistantConfigured, resolveModelConfig, DEFAULT_MODE
 // Turning free text into structured specifications.
 export { extractSpecs, type ExtractSpecsInput } from "./extract-specs";
 export { htmlToLines, normalizeSpecKey, normalizeSpecs, parseLabelLines, parseTechSpecs, stripTags, type SpecSection } from "./spec-parse";
+
+// Talking to a host's own streaming endpoint (newline-delimited JSON).
+export { askEndpoint, askEndpointStream, parseStreamLine, readAssistantStream } from "./transport";
 
 // Formatting helpers used by the assistant, shared so hosts render identically.
 export { formatMoney, specsToRecord, stockLabel, stockStatus, toProductCard, STOCK_LABELS } from "./format";

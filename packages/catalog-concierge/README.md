@@ -64,6 +64,47 @@ a shop cannot move that shop's own buttons. Colours come from CSS variables
 neutral fallback, so it inherits a shadcn/ui theme where there is one and still
 looks deliberate where there is not. Use one path or the other, not both.
 
+### Without React, from a script tag
+
+A shop that is not a React app — Shopify, WooCommerce, WordPress, a hand-written
+site — adds one tag:
+
+```html
+<script src="https://your.cdn/concierge.js"
+        data-concierge
+        data-endpoint="https://shop.example/api/assistant"
+        data-name="Fit Assistant"
+        data-greeting="Hi! Ask me anything about our paddles."
+        data-suggestions="Help me choose|What's in stock?"
+        data-privacy-note="Chats are kept for 90 days."
+        data-handoff-href="https://wa.me/60123456789"
+        data-handoff-label="Message us on WhatsApp"
+        defer></script>
+```
+
+The file is `dist/embed.js` (`pnpm --filter catalog-concierge build`), about
+220KB — 68KB gzipped — with React, the widget and the stylesheet inside it. It
+mounts in a **shadow root**, so the shop's CSS cannot reach in and the widget's
+cannot leak out, and it follows the page into dark mode by watching `<html>`
+for a `dark` class or `data-theme="dark"`.
+
+The one thing the shop must build is the endpoint. It takes
+`POST { "message": "…", "path": "/products/atlas" }` and answers in
+newline-delimited JSON, one object per line:
+
+```
+{"type":"status","tool":"search_products"}
+{"type":"reply","result":{"ok":true,"answer":"…","suggestions":["…"],"products":[…]}}
+```
+
+`askConciergeStream` produces exactly those events; see the reference
+implementation in
+[`apps/zy-commerce/src/app/api/assistant/route.ts`](../../apps/zy-commerce/src/app/api/assistant/route.ts),
+which also shows the two things an embedded endpoint needs that a same-origin
+one does not: CORS headers for the origins the shop has listed, and a
+`SameSite=None` session cookie, without which the assistant forgets the
+conversation between every message.
+
 ---
 
 ## Integrating it

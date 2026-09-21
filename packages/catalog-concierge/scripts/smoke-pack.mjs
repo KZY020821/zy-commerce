@@ -49,10 +49,20 @@ for (const needed of ["max-height:9.75rem", "line-clamp-2", "animate-bounce", "v
 for (const forbidden of ["body{margin:0", "h1,h2,h3", "button,[type"]) {
   if (css.includes(forbidden)) fail("the stylesheet resets the host page: " + forbidden);
 }
+
+// The <script> embed: one file a shop points a tag at, React and the
+// stylesheet inside it. A budget, because this one is downloaded by every
+// visitor of every shop that installs it.
+const embed = readFileSync(new URL("./node_modules/catalog-concierge/dist/embed.js", import.meta.url), "utf8");
+const embedKb = Math.round(embed.length / 1024);
+if (embedKb > 320) fail("the embed bundle has grown to " + embedKb + "KB");
+for (const needed of ["data-concierge-root", "attachShadow", "@property"]) {
+  if (!embed.includes(needed)) fail("the embed bundle is missing " + needed);
+}
 for (const file of ["LICENSE", "README.md"]) {
   if (!existsSync(new URL("./node_modules/catalog-concierge/" + file, import.meta.url))) fail("the tarball has no " + file);
 }
-console.log("✓ installed from the tarball: " + Object.keys(core).length + " exports, widget entry, types, a " + Math.round(css.length / 1024) + "KB stylesheet with no page reset, LICENSE and README present");
+console.log("✓ installed from the tarball: " + Object.keys(core).length + " exports, widget entry, types, a " + Math.round(css.length / 1024) + "KB stylesheet with no page reset, a " + embedKb + "KB script embed, LICENSE and README present");
 `;
 
 try {

@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./react": "./src/react.ts",
-    "./styles.css": "./dist/styles.css"
+    "./styles.css": "./dist/styles.css",
+    "./embed": "./dist/embed.js"
   },
   "files": [
     "dist",
@@ -24,12 +25,13 @@
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:watch": "vitest",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && node scripts/add-esm-extensions.mjs && pnpm run build:css",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && node scripts/add-esm-extensions.mjs && pnpm run build:css && pnpm run build:embed",
     "prepack": "pnpm run build",
     "clean": "rm -rf dist",
     "test:coverage": "vitest run --coverage",
     "test:pack": "node scripts/smoke-pack.mjs",
-    "build:css": "tailwindcss -i ./styles/widget.css -o ./dist/styles.css --minify"
+    "build:css": "tailwindcss -i ./styles/widget.css -o ./dist/styles.css --minify",
+    "build:embed": "node scripts/build-embed.mjs"
   },
   "peerDependencies": {
     "openai": ">=6",
@@ -50,6 +52,7 @@
     "@types/react": "^19",
     "@types/react-dom": "19.2.7",
     "@vitest/coverage-v8": "5.0.0",
+    "esbuild": "^0.25.0",
     "eslint": "^9",
     "jsdom": "30.0.1",
     "openai": "^7",
@@ -70,7 +73,8 @@
         "types": "./dist/react.d.ts",
         "default": "./dist/react.js"
       },
-      "./styles.css": "./dist/styles.css"
+      "./styles.css": "./dist/styles.css",
+      "./embed": "./dist/embed.js"
     },
     "types": "./dist/index.d.ts",
     "main": "./dist/index.js"

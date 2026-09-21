@@ -121,6 +121,17 @@ export interface ProductCard {
   note?: string;
 }
 
+/** What a host hands back for one question: the reply, or why there isn't one. */
+export type AssistantAnswer =
+  | { ok: true; answer: string; suggestions: string[]; products: ProductCard[] }
+  | { ok: false; error: string };
+
+/**
+ * What a streaming host reports while a reply is being put together: the
+ * tools the assistant is using, then the finished reply.
+ */
+export type AssistantStreamEvent = { kind: "tool"; name: string } | { kind: "reply"; result: AssistantAnswer };
+
 /**
  * One message of a conversation a host is putting back on screen.
  *
