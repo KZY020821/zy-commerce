@@ -18,7 +18,7 @@ const work = mkdtempSync(join(tmpdir(), "concierge-pack-"));
 const run = (command, args, cwd) => execFileSync(command, args, { cwd, stdio: "inherit" });
 
 const check = `
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import * as core from "catalog-concierge";
 import * as ui from "catalog-concierge/react";
 
@@ -35,13 +35,24 @@ const vocab = core.buildStoreVocabulary({ storeName: "Acme", profile, productNam
 if (core.classifyMessage("what is the weather?", vocab, { hasHistory: false }).onTopic) fail("the guard admitted an off-topic question");
 if (!core.classifyMessage("do you have trail runners?", vocab, { hasHistory: false }).onTopic) fail("the guard refused a catalogue question");
 
-for (const file of ["index.d.ts", "react.d.ts", "index.js", "react.js"]) {
+for (const file of ["index.d.ts", "react.d.ts", "index.js", "react.js", "styles.css"]) {
   if (!existsSync(new URL("./node_modules/catalog-concierge/dist/" + file, import.meta.url))) fail("the tarball has no dist/" + file);
+}
+
+// The stylesheet is what a host without Tailwind installs. It has to carry the
+// widget's own classes, and it must not carry a reset that would reformat the
+// shop around it.
+const css = readFileSync(new URL("./node_modules/catalog-concierge/dist/styles.css", import.meta.url), "utf8");
+for (const needed of ["max-height:9.75rem", "line-clamp-2", "animate-bounce", "var(--primary,", "prefers-color-scheme:dark", "env(safe-area-inset-bottom)"]) {
+  if (!css.includes(needed)) fail("the stylesheet is missing " + needed);
+}
+for (const forbidden of ["body{margin:0", "h1,h2,h3", "button,[type"]) {
+  if (css.includes(forbidden)) fail("the stylesheet resets the host page: " + forbidden);
 }
 for (const file of ["LICENSE", "README.md"]) {
   if (!existsSync(new URL("./node_modules/catalog-concierge/" + file, import.meta.url))) fail("the tarball has no " + file);
 }
-console.log("✓ installed from the tarball: " + Object.keys(core).length + " exports, widget entry, types, LICENSE and README present");
+console.log("✓ installed from the tarball: " + Object.keys(core).length + " exports, widget entry, types, a " + Math.round(css.length / 1024) + "KB stylesheet with no page reset, LICENSE and README present");
 `;
 
 try {

@@ -31,6 +31,41 @@ Concierge: Two good options under $150:
 
 ---
 
+## Installing it
+
+```bash
+pnpm add catalog-concierge openai zod        # plus react, for the widget
+```
+
+> **Licence.** The package is `private` and the current `LICENSE` grants no
+> right to use it: the source is published so clients and employers can read
+> it. [`docs/LICENSING.md`](../../docs/LICENSING.md) covers what has to change
+> before it can be sold or installed by someone else.
+
+**If your app runs Tailwind**, point it at the package so the widget's classes
+are generated, and you are done:
+
+```css
+/* app.css, next to your @import "tailwindcss" */
+@source "../node_modules/catalog-concierge/src";
+```
+
+**If it does not** — or you would rather not scan a dependency — import the
+prebuilt stylesheet instead:
+
+```ts
+import "catalog-concierge/styles.css";
+```
+
+It carries the widget's own classes and nothing else: no reset, no preflight,
+nothing that touches an element the widget does not render, so dropping it into
+a shop cannot move that shop's own buttons. Colours come from CSS variables
+(`--primary`, `--background`, `--muted`, `--border`, `--ring`…), each with a
+neutral fallback, so it inherits a shadcn/ui theme where there is one and still
+looks deliberate where there is not. Use one path or the other, not both.
+
+---
+
 ## Integrating it
 
 You implement **two methods**. That is the entire integration surface.
@@ -192,14 +227,7 @@ Scrolling back through a long answer no longer means missing the next one: new r
 
 The widget has no design-system dependency. It uses Tailwind utility classes and the CSS variables most Tailwind setups already define (`--primary`, `--background`, `--muted`, `--input`, `--ring`), so it inherits your theme automatically.
 
-> **One required step with Tailwind v4.** Tailwind only generates classes it can see, and it does not scan your dependencies. Point it at the package or the widget will render unstyled — most visibly, it will lose its fixed positioning and appear in the top-left corner:
->
-> ```css
-> /* app.css, next to your @import "tailwindcss" */
-> @source "../node_modules/catalog-concierge/src";
-> ```
->
-> In a monorepo, use the relative path to the package instead, e.g. `@source "../../../../packages/catalog-concierge/src";`.
+> **Styling is one line, either way.** With Tailwind, `@source` the package so it generates the widget's classes (in a monorepo, the relative path: `@source "../../../../packages/catalog-concierge/src";`). Without it, `import "catalog-concierge/styles.css"`. Skip both and the widget renders unstyled — most visibly, it loses its fixed positioning and appears in the top-left corner. See **Installing it** above.
 
 ### Specifications are what make it good
 

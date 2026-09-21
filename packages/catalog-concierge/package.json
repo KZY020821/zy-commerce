@@ -7,12 +7,15 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./react": "./src/react.ts"
+    "./react": "./src/react.ts",
+    "./styles.css": "./dist/styles.css"
   },
   "files": [
     "dist",
     "src",
+    "styles",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
@@ -21,11 +24,12 @@
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:watch": "vitest",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && node scripts/add-esm-extensions.mjs",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && node scripts/add-esm-extensions.mjs && pnpm run build:css",
     "prepack": "pnpm run build",
     "clean": "rm -rf dist",
     "test:coverage": "vitest run --coverage",
-    "test:pack": "node scripts/smoke-pack.mjs"
+    "test:pack": "node scripts/smoke-pack.mjs",
+    "build:css": "tailwindcss -i ./styles/widget.css -o ./dist/styles.css --minify"
   },
   "peerDependencies": {
     "openai": ">=6",
@@ -39,6 +43,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@tailwindcss/cli": "^4.3.3",
     "@testing-library/dom": "10.4.1",
     "@testing-library/react": "16.3.3",
     "@types/node": "^22.20.1",
@@ -64,7 +69,8 @@
       "./react": {
         "types": "./dist/react.d.ts",
         "default": "./dist/react.js"
-      }
+      },
+      "./styles.css": "./dist/styles.css"
     },
     "types": "./dist/index.d.ts",
     "main": "./dist/index.js"
