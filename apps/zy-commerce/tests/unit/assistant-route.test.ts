@@ -84,6 +84,30 @@ describe("POST /api/assistant — answering as it works", () => {
     expect(db.chatConversation.create).toHaveBeenCalledTimes(1);
   });
 
+  it("streams the answer as the model writes it, then the finished reply", async () => {
+    vi.mocked(askConciergeStream).mockImplementation(
+      (async function* () {
+        yield { kind: "tool", name: "search_products" };
+        yield { kind: "answer", delta: "Try the " };
+        yield { kind: "answer", delta: "Atlas." };
+        return reply;
+      }) as unknown as typeof askConciergeStream,
+    );
+
+    expect(await lines(await ask({ message: "which paddle?" }))).toEqual([
+      { type: "status", tool: "search_products" },
+      { type: "answer", delta: "Try the " },
+      { type: "answer", delta: "Atlas." },
+      { type: "reply", result: { ok: true, answer: "Try the Atlas.", suggestions: ["Compare them"], products: reply.products } },
+    ]);
+  });
+
+  it("asks the package to stream, which a Server Action cannot do", async () => {
+    await lines(await ask({ message: "which paddle?" }));
+
+    expect(askConciergeStream).toHaveBeenCalledWith(expect.objectContaining({ streamAnswer: true }), expect.anything());
+  });
+
   it("tells the assistant which product page the question came from", async () => {
     db.product.findFirst.mockResolvedValueOnce({ sku: "PAD-1" });
 

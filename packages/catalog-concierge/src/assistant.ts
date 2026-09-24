@@ -15,6 +15,7 @@
  */
 import type OpenAI from "openai";
 import { formatMoney } from "./format";
+import { partialAnswer } from "./partial-json";
 import { renderCatalogProfile, type CatalogProfile } from "./profile";
 import type { StoreProfile } from "./types";
 import { assistantTools, runAssistantTool, type ToolContext } from "./tools";
@@ -26,8 +27,25 @@ export interface AssistantStoreContext extends StoreProfile {
 
 export type { ConversationTurn as AssistantTurn } from "./types";
 
-/** Something the assistant did, reported while the customer waits. */
-export type AssistantEvent = { kind: "tool"; name: string };
+/**
+ * Something the assistant did, reported while the customer waits: a tool it
+ * reached for, or the next piece of the answer as it is written.
+ */
+export type AssistantEvent =
+  | { kind: "tool"; name: string }
+  | {
+      kind: "answer";
+      delta: string;
+      /**
+       * Throw away what came before and start from this delta.
+       *
+       * Models often think out loud before reaching for a tool — "I'll look
+       * for beginner-friendly paddles" — and then write the real answer. Both
+       * are worth showing as they arrive, but the second replaces the first
+       * rather than following it.
+       */
+      restart?: true;
+    };
 
 export interface AssistantReply {
   answer: string;
@@ -60,6 +78,23 @@ export type DeepSeekChatCompletionCreateParams = OpenAI.Chat.Completions.ChatCom
 /** Minimal surface of the SDK client the loop needs — lets tests pass a fake. */
 export type MessagesClient = {
   chat: { completions: { create: (params: DeepSeekChatCompletionCreateParams) => Promise<OpenAI.Chat.Completions.ChatCompletion> } };
+};
+
+/**
+ * The same client, asked for a stream.
+ *
+ * Every OpenAI-compatible SDK returns an async iterable of chunks for
+ * `stream: true`; the narrower `MessagesClient` above is what a test fake has
+ * to implement, so opting into streaming is what says yours can do both.
+ */
+export type DeepSeekChatCompletionStreamParams = Omit<DeepSeekChatCompletionCreateParams, "stream"> & {
+  stream: true;
+  /** OpenAI-compatible: usage arrives in a final chunk rather than not at all. */
+  stream_options?: { include_usage: boolean };
+};
+
+export type StreamingMessagesClient = {
+  chat: { completions: { create: (params: DeepSeekChatCompletionStreamParams) => Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> } };
 };
 
 export const MAX_TOOL_ROUNDS = 6;
@@ -144,6 +179,13 @@ interface RunOptions {
   userMessage: string;
   /** Resolved by the caller against the catalogue; see `askConcierge`. */
   viewing?: ViewingContext;
+  /**
+   * Ask the model to stream, and report the answer as it is written.
+   *
+   * Off by default: it asserts that `client` handles `stream: true`, which
+   * every OpenAI-compatible SDK does and a hand-written test fake does not.
+   */
+  streamAnswer?: boolean;
 }
 
 function isFunctionCall(call: OpenAI.Chat.Completions.ChatCompletionMessageToolCall): call is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall {
@@ -189,9 +231,12 @@ export async function* runAssistantEvents(opts: RunOptions): AsyncGenerator<Assi
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [{ role: "system", content: system }, ...history, { role: "user", content: opts.userMessage }];
   const toolCalls: AssistantReply["toolCalls"] = [];
   let usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0 };
+  /** True while what the customer is reading is the model thinking out loud. */
+  let thinkingAloud = false;
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-    const response = await opts.client.chat.completions.create({ model: opts.model, max_tokens: 2048, tools: assistantTools, messages, thinking: { type: "disabled" } });
+    const params = { model: opts.model, max_tokens: 2048, tools: assistantTools, messages, thinking: { type: "disabled" as const } };
+    const response = opts.streamAnswer ? yield* reportRound(streamRound(opts.client as unknown as StreamingMessagesClient, params), () => thinkingAloud, (aloud) => (thinkingAloud = aloud)) : await opts.client.chat.completions.create(params);
     const u = response.usage;
     usage = {
       inputTokens: usage.inputTokens + (u?.prompt_tokens ?? 0),
@@ -246,6 +291,116 @@ export async function* runAssistantEvents(opts: RunOptions): AsyncGenerator<Assi
   }
 
   return { answer: "I looked into that but couldn't put together a confident answer. Could you rephrase or narrow it down?", suggestions: ["Show me popular products", "Start over"], productRefs: [], productNotes: [], toolCalls, usage };
+}
+
+/**
+ * One round of the conversation, streamed.
+ *
+ * Yields the answer as the model writes it and returns the same shape the
+ * non-streaming call returns, so everything after it — the tool loop, the
+ * fallbacks, the usage — is untouched by how the bytes arrived.
+ *
+ * Only the `respond` call's `answer` is streamed. A tool call's arguments are
+ * machine input: showing a customer half a search query would be noise, and
+ * the tools themselves are already reported as they are used.
+ */
+/** What a streamed round reports: the answer, as it is written. Tools are the loop's to announce, when it runs them. */
+type RoundEvent = { kind: "answer"; delta: string; source: "content" | "respond" };
+
+/**
+ * A round's events as the host sees them.
+ *
+ * The only translation is about where the text came from: plain content is
+ * the model thinking out loud, and the first piece of the real answer tells
+ * whoever is reading to start again.
+ */
+async function* reportRound(
+  round: AsyncGenerator<RoundEvent, OpenAI.Chat.Completions.ChatCompletion>,
+  wasThinkingAloud: () => boolean,
+  setThinkingAloud: (aloud: boolean) => void,
+): AsyncGenerator<AssistantEvent, OpenAI.Chat.Completions.ChatCompletion> {
+  // Each round is its own utterance: a second thought replaces the first
+  // rather than running into it, and the answer replaces both.
+  let spokeThisRound = false;
+  let step = await round.next();
+
+  while (!step.done) {
+    const event = step.value;
+    const restart = !spokeThisRound && wasThinkingAloud();
+    spokeThisRound = true;
+    setThinkingAloud(event.source === "content");
+    yield restart ? { kind: "answer", delta: event.delta, restart: true } : { kind: "answer", delta: event.delta };
+    step = await round.next();
+  }
+
+  return step.value;
+}
+
+async function* streamRound(
+  client: StreamingMessagesClient,
+  params: DeepSeekChatCompletionCreateParams,
+): AsyncGenerator<RoundEvent, OpenAI.Chat.Completions.ChatCompletion> {
+  const stream = await client.chat.completions.create({ ...params, stream: true, stream_options: { include_usage: true } } as DeepSeekChatCompletionStreamParams);
+
+  const calls = new Map<number, { id: string; name: string; arguments: string }>();
+  let content = "";
+  let refusal: string | null = null;
+  let finishReason: OpenAI.Chat.Completions.ChatCompletion.Choice["finish_reason"] | null = null;
+  let usage: OpenAI.Completions.CompletionUsage | undefined;
+  /** How much of the answer the customer has already been shown. */
+  let shown = 0;
+
+  for await (const chunk of stream) {
+    if (chunk.usage) usage = chunk.usage;
+    const choice = chunk.choices[0];
+    if (!choice) continue;
+
+    // A model that answers in plain text instead of calling `respond`.
+    if (choice.delta.content) {
+      content += choice.delta.content;
+      yield { kind: "answer", delta: choice.delta.content, source: "content" };
+    }
+    if (choice.delta.refusal) refusal = (refusal ?? "") + choice.delta.refusal;
+
+    for (const delta of choice.delta.tool_calls ?? []) {
+      const call = calls.get(delta.index) ?? { id: "", name: "", arguments: "" };
+      if (delta.id) call.id = delta.id;
+      if (delta.function?.name) call.name = delta.function.name;
+      if (delta.function?.arguments) call.arguments += delta.function.arguments;
+      calls.set(delta.index, call);
+
+      if (call.name !== "respond") continue;
+      // The answer is inside JSON that has not finished arriving; send on
+      // whatever is new since the last chunk, and never the same twice.
+      const answer = partialAnswer(call.arguments);
+      if (answer.length > shown) {
+        yield { kind: "answer", delta: answer.slice(shown), source: "respond" };
+        shown = answer.length;
+      }
+    }
+
+    if (choice.finish_reason) finishReason = choice.finish_reason;
+  }
+
+  const toolCalls = [...calls.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, call]) => ({ id: call.id, type: "function" as const, function: { name: call.name, arguments: call.arguments } }));
+
+  return {
+    id: "streamed",
+    object: "chat.completion",
+    created: 0,
+    model: params.model,
+    choices: [
+      {
+        index: 0,
+        logprobs: null,
+        finish_reason: finishReason ?? "stop",
+        message: { role: "assistant", content: content || null, refusal, ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}) },
+      },
+    ],
+    ...(usage ? { usage } : {}),
+  } as unknown as OpenAI.Chat.Completions.ChatCompletion;
 }
 
 /** The loop with nobody watching: runs it to the end and hands back the reply. */

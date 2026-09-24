@@ -2,8 +2,9 @@
  * The storefront assistant, answering as it works.
  *
  * A turn takes several seconds, nearly all of it inside the model's tool loop,
- * and three silent dots make that feel broken. This route streams one line per
- * tool call — searching, opening a product, comparing — and then the answer.
+ * and three silent dots make that feel broken. This route streams a line per
+ * tool call — searching, opening a product, comparing — then the answer as the
+ * model writes it, then the finished reply with its cards and chips.
  *
  * It answers three other things about a conversation too — putting it back on
  * screen, rating an answer, starting a new one — because a widget embedded on
@@ -87,11 +88,17 @@ export async function POST(request: Request): Promise<Response> {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        const events = askConciergeStream({ store: storeProfile(turn.tenant), adapter: turn.adapter }, { message: turn.message, history: turn.history, viewing: turn.viewing });
+        const events = askConciergeStream(
+          // Streaming the answer is the whole reason this is a route: the
+          // customer reads the reply as it is written rather than after it.
+          { store: storeProfile(turn.tenant), adapter: turn.adapter, streamAnswer: true },
+          { message: turn.message, history: turn.history, viewing: turn.viewing },
+        );
 
         let step = await events.next();
         while (!step.done) {
-          controller.enqueue(line({ type: "status", tool: step.value.name }));
+          const event = step.value;
+          controller.enqueue(event.kind === "tool" ? line({ type: "status", tool: event.name }) : line({ type: "answer", delta: event.delta, ...(event.restart ? { restart: true } : {}) }));
           step = await events.next();
         }
 

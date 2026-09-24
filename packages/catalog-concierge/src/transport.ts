@@ -15,6 +15,7 @@
  * The wire format is newline-delimited JSON, one object per line:
  *
  *   {"type":"status","tool":"search_products"}
+ *   {"type":"answer","delta":"The Atlas ","restart":true}
  *   {"type":"reply","result":{"ok":true,"answer":"…","suggestions":[],"products":[]}}
  *
  * Anything else on a line is ignored rather than fatal: a proxy that injects a
@@ -30,8 +31,9 @@ export function parseStreamLine(line: string): AssistantStreamEvent | null {
   try {
     const parsed: unknown = JSON.parse(trimmed);
     if (!parsed || typeof parsed !== "object") return null;
-    const event = parsed as { type?: unknown; tool?: unknown; result?: unknown };
+    const event = parsed as { type?: unknown; tool?: unknown; delta?: unknown; restart?: unknown; result?: unknown };
     if (event.type === "status" && typeof event.tool === "string") return { kind: "tool", name: event.tool };
+    if (event.type === "answer" && typeof event.delta === "string") return { kind: "answer", delta: event.delta, ...(event.restart === true ? { restart: true } : {}) };
     if (event.type === "reply" && event.result && typeof event.result === "object") return { kind: "reply", result: event.result as AssistantAnswer };
     return null;
   } catch {

@@ -37,7 +37,7 @@ export { buildStarterSuggestions } from "./starters";
 export { assistantTools, runAssistantTool, searchCatalogue, summariseCategories, type SearchFilters, type ToolContext } from "./tools";
 
 // The raw tool loop, for hosts that want to drive it themselves.
-export { buildSystemPrompt, drain, runAssistant, runAssistantEvents, trimHistory, MAX_HISTORY_CHARS, MAX_POLICY_CHARS, MAX_TOOL_ROUNDS, type AssistantEvent, type AssistantReply, type AssistantStoreContext, type MessagesClient, type ViewingContext } from "./assistant";
+export { buildSystemPrompt, drain, runAssistant, runAssistantEvents, trimHistory, MAX_HISTORY_CHARS, MAX_POLICY_CHARS, MAX_TOOL_ROUNDS, type AssistantEvent, type AssistantReply, type AssistantStoreContext, type MessagesClient, type StreamingMessagesClient, type ViewingContext } from "./assistant";
 
 // Model client resolution (any OpenAI-compatible endpoint).
 export { getModelClient, isAssistantConfigured, resolveModelConfig, DEFAULT_MODEL, type ModelConfig } from "./model";
@@ -59,6 +59,9 @@ export { assessCatalogue, countSpecs, type CatalogueReadiness } from "./readines
 
 // What a turn cost, once a host supplies its provider's rates.
 export { estimateCost, replyUsage, totalUsage, type CostBreakdown, type TokenRates, type TokenUsage } from "./cost";
+
+// Reading an answer out of JSON that is still arriving.
+export { partialAnswer } from "./partial-json";
 
 // Talking to a host's own streaming endpoint (newline-delimited JSON).
 export { askEndpoint, askEndpointStream, loadEndpointHistory, parseStreamLine, readAssistantStream, sendEndpointFeedback, startEndpointChat } from "./transport";

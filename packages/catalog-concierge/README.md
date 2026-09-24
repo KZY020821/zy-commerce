@@ -235,6 +235,19 @@ const reply = step.value;
 
 `askConcierge` is this drained to its end, so there is one implementation of a turn and choosing progress reporting cannot change the answer.
 
+Add `streamAnswer: true` and the reply itself arrives as it is written:
+
+```ts
+askConciergeStream({ store, adapter, streamAnswer: true }, { message, history });
+// → { kind: "tool", name: "search_products" }
+//   { kind: "answer", delta: "For tennis elbow, " }
+//   { kind: "answer", delta: "a 16mm core " } …
+```
+
+Measured against the live model: first words on screen at **0.9 seconds** instead of a blank wait until 5.7. It is off by default because it asserts your client handles `stream: true` — every OpenAI-compatible SDK does; a hand-written test fake need not.
+
+Models think out loud before reaching for a tool ("I'll look that up now"), so an `answer` event can carry `restart: true`: throw away what is on screen and start from this delta. The widget does that for you; a host rendering its own UI should too, or the customer reads the assistant's notes and its answer run together.
+
 On the widget side, `onSendStream` takes over from `onSend` when you pass it, and the customer sees "Searching the catalogue…" then "Comparing products…" instead of dots. If the stream fails before a reply arrives, the widget falls back to `onSend` — a dropped connection should not cost someone their question. The reference app streams NDJSON from a Route Handler; see [`src/app/api/assistant/route.ts`](../../apps/zy-commerce/src/app/api/assistant/route.ts).
 
 ### Finding out whether it actually helped

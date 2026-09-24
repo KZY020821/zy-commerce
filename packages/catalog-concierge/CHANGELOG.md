@@ -33,6 +33,9 @@ exported from `catalog-concierge` and `catalog-concierge/react`, plus the
 - Progress reporting: `askConciergeStream` yields an event per tool call and
   returns the reply, and the widget's `onSendStream` shows it ("Searching the
   catalogue…"). `askConcierge` is the same turn drained to its end.
+- `streamAnswer: true` streams the reply as the model writes it, including the
+  thinking-out-loud a model does before reaching for a tool — with
+  `restart: true` on the event that supersedes it.
 - A reason per product: `respond` takes `productNotes`, and the card prints it
   under the name. Used only when there is exactly one per product.
 - Conversation restore (`loadHistory`), ratings (`onFeedback`), a handover to a
