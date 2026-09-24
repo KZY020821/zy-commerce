@@ -5,7 +5,8 @@
  */
 import type OpenAI from "openai";
 import { describe, expect, it, vi } from "vitest";
-import { buildSystemPrompt, runAssistant, trimHistory, MAX_HISTORY_CHARS, type AssistantStoreContext, type MessagesClient } from "../src/assistant";
+import { buildSystemPrompt, runAssistant, trimHistory, MAX_HISTORY_CHARS, MAX_POLICY_CHARS, type AssistantStoreContext, type MessagesClient } from "../src/assistant";
+import { buildCatalogProfile } from "../src/profile";
 import * as tools from "../src/tools";
 
 const store: AssistantStoreContext = {
@@ -186,5 +187,39 @@ describe("trimHistory", () => {
 
   it("returns nothing when even the newest turn overflows the budget", () => {
     expect(trimHistory([t("z".repeat(MAX_HISTORY_CHARS + 1))])).toEqual([]);
+  });
+});
+
+describe("buildSystemPrompt — the shop's own facts", () => {
+  const base = { storeName: "Selkirk Demo", assistantName: "Fit Assistant", currency: "MYR", locale: "en-MY", profile: buildCatalogProfile([]) };
+
+  it("quotes the store information and says it is the only source outside the catalogue", () => {
+    const prompt = buildSystemPrompt({ ...base, policies: "Free delivery over RM200. Returns within 14 days." });
+
+    expect(prompt).toContain("Free delivery over RM200. Returns within 14 days.");
+    expect(prompt).toContain("Store information (the shop's own words");
+    expect(prompt).toContain("must come from the store information below, quoted as written");
+  });
+
+  it("leaves the section out entirely when the shop has written nothing", () => {
+    expect(buildSystemPrompt(base)).not.toContain("Store information");
+    expect(buildSystemPrompt({ ...base, policies: "   " })).not.toContain("Store information");
+  });
+
+  // Resent on every tool round, so a pasted terms page cannot make a turn expensive.
+  it("caps how much of it reaches the model", () => {
+    const prompt = buildSystemPrompt({ ...base, policies: "x".repeat(MAX_POLICY_CHARS + 500) });
+    expect(prompt).toContain("x".repeat(MAX_POLICY_CHARS));
+    expect(prompt).not.toContain("x".repeat(MAX_POLICY_CHARS + 1));
+  });
+});
+
+describe("respond — the reason behind each card", () => {
+  it("asks for one reason per product, in the same order", () => {
+    const respond = tools.assistantTools.find((t) => t.function.name === "respond")!;
+    const properties = (respond.function.parameters as { properties: Record<string, { description?: string }>; required: string[] });
+
+    expect(properties.required).toContain("productNotes");
+    expect(properties.properties.productNotes!.description).toMatch(/same order and the same length/);
   });
 });

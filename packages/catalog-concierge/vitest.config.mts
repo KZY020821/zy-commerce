@@ -17,10 +17,11 @@ export default defineConfig({
       reporter: ["text-summary", "text", "json-summary"],
       reportsDirectory: "coverage",
       thresholds: {
-        // Measured 2026-09-12: 97.67% statements, 87.46% branches, 99.09%
-        // functions, 99.73% lines — each rounded down to a whole percent.
-        statements: 97,
-        branches: 87,
+        // Measured 2026-09-20: 98.22% statements, 91.36% branches, 100%
+        // functions, 100% lines — each rounded down to a whole percent, except
+        // functions, kept at 99 so one uncovered callback is not a failure.
+        statements: 98,
+        branches: 91,
         functions: 99,
         lines: 99,
       },

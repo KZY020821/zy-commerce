@@ -1,5 +1,5 @@
 /** Display helpers. Self-contained so the package has no runtime dependencies beyond the model SDK. */
-import type { CatalogueProduct, StockLabel, StockStatus } from "./types";
+import type { CatalogueProduct, ProductCard, StockLabel, StockStatus } from "./types";
 
 const DEFAULT_LOW_STOCK = 5;
 
@@ -47,4 +47,25 @@ export function specsToRecord(specs: Record<string, string | number | null> | nu
     if (s) out[k] = s;
   }
   return out;
+}
+
+/**
+ * A catalogue product as the widget renders it.
+ *
+ * Exported because a host has to build the same card twice: once from a live
+ * reply, and once when it restores a conversation from its own record. Both
+ * paths go through here, so a restored card can never look different from the
+ * card the customer saw the first time.
+ */
+export function toProductCard(product: CatalogueProduct, store: { currency: string; locale?: string }): ProductCard {
+  return {
+    ref: product.ref,
+    name: product.name,
+    url: product.url ?? null,
+    imageUrl: product.imageUrl ?? null,
+    price: product.price,
+    priceFrom: Boolean(product.priceFrom),
+    priceLabel: formatMoney(product.price, store.currency, store.locale),
+    stockLabel: stockLabel(product),
+  };
 }

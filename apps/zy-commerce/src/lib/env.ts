@@ -27,6 +27,8 @@ const coreSchema = z.object({
   EMAIL_FROM: optionalString(),
   BLOB_READ_WRITE_TOKEN: optionalString(),
   DEEPSEEK_API_KEY: optionalString(),
+  /** Origins allowed to embed the assistant, comma separated. Empty means none. */
+  ASSISTANT_ALLOWED_ORIGINS: optionalString(),
   AI_MODEL: optionalString(),
   AI_BASE_URL: optionalString(),
 });

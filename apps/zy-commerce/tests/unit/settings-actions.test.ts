@@ -22,7 +22,7 @@ vi.mock("@/lib/tenant/logo-service", () => ({
 vi.mock("next/cache", () => ({ refresh: vi.fn() }));
 
 import { refresh } from "next/cache";
-import { updateLogoAction } from "@/app/[tenant]/admin/(dashboard)/settings/actions";
+import { updateAssistantAction, updateLogoAction } from "@/app/[tenant]/admin/(dashboard)/settings/actions";
 import { assertStoreAdmin, ForbiddenError } from "@/lib/auth/guards";
 import { rateLimitStore } from "@/lib/auth/rate-limit";
 import { getTenantDb } from "@/lib/tenant/current";
@@ -136,5 +136,81 @@ describe("updateLogoAction — results", () => {
     vi.mocked(removeTenantLogo).mockResolvedValueOnce({ ok: false, error: "The logo couldn't be removed. Please try again." });
     expect(await updateLogoAction(undefined, removeForm())).toEqual({ ok: false, error: "The logo couldn't be removed. Please try again." });
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The assistant's own settings. "Shop information" is the only non-product
+ * source the model may state, so what is stored here is what customers are
+ * told about delivery, returns and opening hours.
+ */
+describe("updateAssistantAction — what the shop tells its assistant", () => {
+  let db: { tenant: { update: ReturnType<typeof vi.fn> } };
+
+  beforeEach(() => {
+    db = { tenant: { update: vi.fn(async () => ({})) } };
+    vi.mocked(getTenantDb).mockResolvedValue(db as never);
+  });
+
+  function assistantForm(over: Record<string, string> = {}) {
+    const form = new FormData();
+    form.set("assistantName", "Fit Assistant");
+    form.set("assistantGreeting", "Hi! Ask me anything.");
+    form.set("assistantPolicies", "Delivery: free over RM 200.");
+    form.set("assistantSynonyms", "shoes, sneakers");
+    form.set("supportWhatsapp", "+60 12-345 6789");
+    for (const [key, value] of Object.entries(over)) form.set(key, value);
+    return form;
+  }
+
+  it("refuses a caller who is not this store's admin", async () => {
+    vi.mocked(assertStoreAdmin).mockRejectedValueOnce(new ForbiddenError("Store admin required"));
+
+    expect(await updateAssistantAction(undefined, assistantForm())).toEqual({ ok: false, error: expect.stringContaining("Sign in again") });
+    expect(db.tenant.update).not.toHaveBeenCalled();
+  });
+
+  it("saves the four fields against this admin's own store", async () => {
+    expect(await updateAssistantAction(undefined, assistantForm())).toEqual({ ok: true, message: "Saved. Your storefront assistant is using it now." });
+
+    expect(db.tenant.update).toHaveBeenCalledWith({
+      where: { id: "t-acme" },
+      data: {
+        assistantName: "Fit Assistant",
+        assistantGreeting: "Hi! Ask me anything.",
+        assistantPolicies: "Delivery: free over RM 200.",
+        assistantSynonyms: "shoes, sneakers",
+        supportWhatsapp: "+60 12-345 6789",
+      },
+    });
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("treats an empty box as no opinion, not as an empty greeting", async () => {
+    await updateAssistantAction(undefined, assistantForm({ assistantGreeting: "  ", assistantPolicies: "", assistantSynonyms: "", supportWhatsapp: "" }));
+
+    expect(db.tenant.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ assistantGreeting: null, assistantPolicies: null, assistantSynonyms: null, supportWhatsapp: null }) }),
+    );
+  });
+
+  it("says what is wrong instead of saving it", async () => {
+    const cases: Array<[Record<string, string>, RegExp]> = [
+      [{ assistantName: "  " }, /Give the assistant a name/],
+      [{ assistantName: "x".repeat(61) }, /under 60 characters/],
+      [{ assistantGreeting: "x".repeat(301) }, /under 300 characters/],
+      [{ assistantPolicies: "x".repeat(4001) }, /under 4,000 characters/],
+      [{ supportWhatsapp: "call me maybe" }, /international format/],
+    ];
+    for (const [over, message] of cases) {
+      expect(await updateAssistantAction(undefined, assistantForm(over)), JSON.stringify(over).slice(0, 40)).toEqual({ ok: false, error: expect.stringMatching(message) });
+    }
+    expect(db.tenant.update).not.toHaveBeenCalled();
+  });
+
+  it("stops one admin from hammering it", async () => {
+    for (let i = 0; i < 30; i++) expect((await updateAssistantAction(undefined, assistantForm()))?.ok).toBe(true);
+
+    expect(await updateAssistantAction(undefined, assistantForm())).toEqual({ ok: false, error: expect.stringContaining("Too many changes") });
   });
 });

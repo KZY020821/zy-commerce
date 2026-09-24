@@ -18,7 +18,8 @@ const work = mkdtempSync(join(tmpdir(), "concierge-pack-"));
 const run = (command, args, cwd) => execFileSync(command, args, { cwd, stdio: "inherit" });
 
 const check = `
-import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import * as core from "catalog-concierge";
 import * as ui from "catalog-concierge/react";
 
@@ -35,13 +36,40 @@ const vocab = core.buildStoreVocabulary({ storeName: "Acme", profile, productNam
 if (core.classifyMessage("what is the weather?", vocab, { hasHistory: false }).onTopic) fail("the guard admitted an off-topic question");
 if (!core.classifyMessage("do you have trail runners?", vocab, { hasHistory: false }).onTopic) fail("the guard refused a catalogue question");
 
-for (const file of ["index.d.ts", "react.d.ts", "index.js", "react.js"]) {
+for (const file of ["index.d.ts", "react.d.ts", "index.js", "react.js", "styles.css"]) {
   if (!existsSync(new URL("./node_modules/catalog-concierge/dist/" + file, import.meta.url))) fail("the tarball has no dist/" + file);
 }
-for (const file of ["LICENSE", "README.md"]) {
+
+// The stylesheet is what a host without Tailwind installs. It has to carry the
+// widget's own classes, and it must not carry a reset that would reformat the
+// shop around it.
+const css = readFileSync(new URL("./node_modules/catalog-concierge/dist/styles.css", import.meta.url), "utf8");
+for (const needed of ["max-height:9.75rem", "line-clamp-2", "animate-bounce", "var(--primary,", "prefers-color-scheme:dark", "env(safe-area-inset-bottom)"]) {
+  if (!css.includes(needed)) fail("the stylesheet is missing " + needed);
+}
+for (const forbidden of ["body{margin:0", "h1,h2,h3", "button,[type"]) {
+  if (css.includes(forbidden)) fail("the stylesheet resets the host page: " + forbidden);
+}
+
+// The <script> embed: one file a shop points a tag at, React and the
+// stylesheet inside it. A budget, because this one is downloaded by every
+// visitor of every shop that installs it.
+const embed = readFileSync(new URL("./node_modules/catalog-concierge/dist/embed.js", import.meta.url), "utf8");
+const embedKb = Math.round(embed.length / 1024);
+if (embedKb > 320) fail("the embed bundle has grown to " + embedKb + "KB");
+for (const needed of ["data-concierge-root", "attachShadow", "@property"]) {
+  if (!embed.includes(needed)) fail("the embed bundle is missing " + needed);
+}
+for (const file of ["LICENSE", "README.md", "CHANGELOG.md", "bin/catalog-concierge.mjs"]) {
   if (!existsSync(new URL("./node_modules/catalog-concierge/" + file, import.meta.url))) fail("the tarball has no " + file);
 }
-console.log("✓ installed from the tarball: " + Object.keys(core).length + " exports, widget entry, types, LICENSE and README present");
+
+// The command a prospective client runs against their own catalogue, from the
+// installed package, exactly as npx catalog-concierge would.
+const cli = execFileSync("node", ["./node_modules/catalog-concierge/bin/catalog-concierge.mjs", "evaluate", "./catalogue.json", "--dry"], { encoding: "utf8" });
+if (!cli.includes("Catalogue: 1 products")) fail("the evaluate command did not read the catalogue: " + cli);
+if (!cli.includes("no specifications")) fail("the evaluate command did not report a product with nothing to say about it");
+console.log("✓ installed from the tarball: " + Object.keys(core).length + " exports, widget entry, types, a " + Math.round(css.length / 1024) + "KB stylesheet with no page reset, a " + embedKb + "KB script embed, LICENSE and README present");
 `;
 
 try {
@@ -55,6 +83,12 @@ try {
   writeFileSync(join(consumer, "package.json"), JSON.stringify({ name: "consumer", private: true, type: "module" }));
   run("npm", ["install", "--no-audit", "--no-fund", "--loglevel=error", join(work, tarball), "openai@^7", "zod@^4", "react@^19"], consumer);
   if (!existsSync(join(consumer, "node_modules", "catalog-concierge"))) throw new Error("the tarball did not install");
+
+  // A catalogue for the command to read, in the shape a client would export.
+  writeFileSync(
+    join(consumer, "catalogue.json"),
+    JSON.stringify([{ ref: "SKU-1", name: "Trail Runner", price: 12000, category: { slug: "shoes", name: "Shoes" } }]),
+  );
 
   writeFileSync(join(consumer, "check.mjs"), check);
   run("node", ["check.mjs"], consumer);

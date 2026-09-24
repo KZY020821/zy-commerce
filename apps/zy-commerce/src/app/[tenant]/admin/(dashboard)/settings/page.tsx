@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AssistantSettings } from "@/components/admin/assistant-settings";
 import { LogoSettings } from "@/components/admin/logo-settings";
 import { PageHeader } from "@/components/shared/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,13 +14,29 @@ export default async function SettingsPage() {
   return (
     <>
       <PageHeader title="Settings" description={`How ${tenant.name} looks to customers`} />
-      <Card className="max-w-2xl">
+      <Card className="mb-6 max-w-2xl">
         <CardHeader>
           <CardTitle>Store logo</CardTitle>
           <CardDescription>Shown in your storefront header. PNG, JPEG or WebP, up to 1 MB. A transparent PNG about 256 pixels tall stays sharp at every size.</CardDescription>
         </CardHeader>
         <CardContent>
           <LogoSettings storeName={tenant.name} logoUrl={tenant.logoUrl} storageConfigured={isLogoStorageConfigured()} />
+        </CardContent>
+      </Card>
+
+      <Card className="max-w-2xl">
+        <CardHeader>
+          <CardTitle>Assistant</CardTitle>
+          <CardDescription>What your storefront assistant is called, how it opens, and what it is allowed to say about the shop itself.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <AssistantSettings
+            assistantName={tenant.assistantName}
+            assistantGreeting={tenant.assistantGreeting}
+            assistantPolicies={tenant.assistantPolicies}
+            assistantSynonyms={tenant.assistantSynonyms}
+            supportWhatsapp={tenant.supportWhatsapp}
+          />
         </CardContent>
       </Card>
     </>

@@ -3,6 +3,7 @@ import { StorefrontFooter } from "@/components/storefront/footer";
 import { StorefrontHeader } from "@/components/storefront/header";
 import { buildStarterSuggestions, isAssistantConfigured } from "catalog-concierge";
 import { getTenantDb, requireCurrentTenant } from "@/lib/tenant/current";
+import { supportHandoff } from "@/lib/tenant/handoff";
 
 export default async function StorefrontLayout({ children }: { children: React.ReactNode }) {
   const tenant = await requireCurrentTenant();
@@ -21,6 +22,7 @@ export default async function StorefrontLayout({ children }: { children: React.R
           greeting={tenant.assistantGreeting ?? `Hi! Ask me anything about the products in ${tenant.name} and I'll answer from their specifications.`}
           configured={isAssistantConfigured()}
           starterSuggestions={starters}
+          handoff={supportHandoff(tenant)}
         />
       ) : null}
     </>

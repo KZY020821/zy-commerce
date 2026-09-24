@@ -1,5 +1,5 @@
 "use client";
 
 /** React entry point: the drop-in chat widget. */
-export { ConciergeWidget, type ConciergeWidgetProps, type WidgetSendResult } from "./ui/widget";
-export type { ConversationTurn, ProductCard } from "./types";
+export { ConciergeWidget, DEFAULT_WIDGET_LABELS, type ConciergeWidgetProps, type WidgetLabels, type WidgetSendResult, type WidgetStreamEvent } from "./ui/widget";
+export type { AssistantAnswer, AssistantStreamEvent, ConversationTurn, ProductCard, RestoredMessage } from "./types";

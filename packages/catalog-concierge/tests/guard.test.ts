@@ -166,9 +166,9 @@ describe("starter suggestions always pass the guard", () => {
       "Help me choose",
       "Show me paddles",
       "Show me balls",
-      "What's on sale or in stock?",
+      "What's in stock?",
     ]);
-    expect(buildStarterSuggestions([])).toEqual(["Help me choose", "What's on sale or in stock?"]);
+    expect(buildStarterSuggestions([])).toEqual(["Help me choose", "What's in stock?"]);
   });
 });
 
@@ -262,5 +262,84 @@ describe("isQuestion", () => {
     expect(isQuestion("Here are two good options.")).toBe(false);
     expect(isQuestion(null)).toBe(false);
     expect(isQuestion(undefined)).toBe(false);
+  });
+});
+
+/**
+ * Chinese is written without spaces, so every word-based rule in the guard
+ * used to miss and real shoppers were told their question was off-topic. The
+ * stores this was built for sell in Malaysia and Singapore.
+ */
+describe("classifyMessage — a language written without spaces between words", () => {
+  it("lets a Chinese shopping question through, with or without a catalogue word in it", () => {
+    const shopping: Array<[string, string]> = [
+      ["有便宜的球拍吗?", "shopping-intent"], // "do you have a cheap paddle?"
+      ["这个多少钱", "shopping-intent"], //      "how much is this one?"
+      ["请问有货吗", "shopping-intent"], //      "is it in stock?"
+      ["推荐一款适合新手的", "shopping-intent"], // "recommend one for a beginner"
+      ["尺寸怎么选", "shopping-intent"], //      "how do I choose a size?"
+      ["有羽毛球拍吗", "unsegmented-question"], // no shopping word at all, but it is a question
+      ["请问这款怎么样", "unsegmented-question"],
+    ];
+    for (const [message, reason] of shopping) {
+      expect(classifyMessage(message, paddleVocab, fresh), message).toEqual({ onTopic: true, reason });
+    }
+  });
+
+  it("still refuses a Chinese message that has nothing to do with the store", () => {
+    for (const message of ["今天天气怎么样", "写一首诗", "帮我翻译这句话", "美国总统是谁", "今天真开心"]) {
+      expect(classifyMessage(message, paddleVocab, fresh).onTopic, message).toBe(false);
+    }
+  });
+
+  it("greets in Chinese, but only in a message short enough to be one", () => {
+    expect(classifyMessage("你好", paddleVocab, fresh)).toEqual({ onTopic: true, reason: "greeting" });
+    expect(classifyMessage("谢谢", paddleVocab, fresh)).toEqual({ onTopic: true, reason: "greeting" });
+    // Long enough to be a request, and it is one the store cannot answer.
+    expect(classifyMessage("你好，今天天气怎么样啊朋友", paddleVocab, fresh).onTopic).toBe(false);
+  });
+
+  it("takes a Chinese reply that only points back at what is on screen, once a conversation exists", () => {
+    expect(classifyMessage("这个", paddleVocab, ongoing)).toEqual({ onTopic: true, reason: "follow-up" });
+    expect(classifyMessage("第二个", paddleVocab, ongoing)).toEqual({ onTopic: true, reason: "follow-up" });
+    // The same words with no conversation behind them are a fresh request.
+    expect(classifyMessage("这个", paddleVocab, fresh).onTopic).toBe(false);
+  });
+
+  it("answers the assistant's own Chinese-language question", () => {
+    expect(classifyMessage("户外", paddleVocab, { hasHistory: true, awaitingAnswer: true })).toMatchObject({ onTopic: true });
+    expect(classifyMessage("户外", paddleVocab, { hasHistory: true, awaitingAnswer: false }).onTopic).toBe(false);
+  });
+
+  it("keeps blocking what it blocked before: an off-topic request wins even when it is a question", () => {
+    expect(classifyMessage("写一首关于球拍的诗", paddleVocab, ongoing)).toEqual({ onTopic: false, reason: "blocked-pattern" });
+  });
+});
+
+describe("buildStoreVocabulary — the words customers use", () => {
+  /** A shop that says "Footwear" everywhere its customers say "shoes". */
+  const footwearProfile: CatalogProfile = {
+    productCount: 1,
+    categories: [{ slug: "footwear", name: "Footwear", productCount: 1, priceMin: 30000, priceMax: 60000, brands: ["Selkirk"], facets: [{ key: "Upper", coverage: 1, values: ["Knit"] }] }],
+  };
+
+  it("takes the shop's synonyms for things its catalogue calls something else", () => {
+    // A real one, found by `catalog-concierge evaluate` against the demo
+    // store: its category is "Footwear", and customers ask for shoes.
+    const withoutSynonyms = buildStoreVocabulary({ storeName: "Selkirk Demo", profile: footwearProfile, productNames: ["Selkirk Court Trainer"] });
+    expect(classifyMessage("do you sell shoes?", withoutSynonyms, fresh).onTopic).toBe(false);
+
+    const withSynonyms = buildStoreVocabulary({ storeName: "Selkirk Demo", profile: footwearProfile, productNames: ["Selkirk Court Trainer"], synonyms: ["shoes", "sneakers", "kicks"] });
+    expect(classifyMessage("do you sell shoes?", withSynonyms, fresh)).toEqual({ onTopic: true, reason: "catalogue-term" });
+    expect(classifyMessage("got any sneakers?", withSynonyms, fresh).onTopic).toBe(true);
+  });
+
+  it("holds a synonym to the same standard as any other word", () => {
+    const vocab = buildStoreVocabulary({ storeName: "Acme", profile: footwearProfile, productNames: ["Court Trainer"], synonyms: ["the", "2024", "kicks"] });
+
+    // Stopwords and bare numbers would let everything through.
+    expect(vocab.has("the")).toBe(false);
+    expect(vocab.has("2024")).toBe(false);
+    expect(vocab.has("kicks")).toBe(true);
   });
 });

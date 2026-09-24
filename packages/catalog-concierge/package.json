@@ -7,12 +7,17 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./react": "./src/react.ts"
+    "./react": "./src/react.ts",
+    "./styles.css": "./dist/styles.css",
+    "./embed": "./dist/embed.js"
   },
   "files": [
+    "bin",
     "dist",
     "src",
+    "styles",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
@@ -21,11 +26,13 @@
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:watch": "vitest",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && node scripts/add-esm-extensions.mjs",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && node scripts/add-esm-extensions.mjs && pnpm run build:css && pnpm run build:embed",
     "prepack": "pnpm run build",
     "clean": "rm -rf dist",
     "test:coverage": "vitest run --coverage",
-    "test:pack": "node scripts/smoke-pack.mjs"
+    "test:pack": "node scripts/smoke-pack.mjs",
+    "build:css": "tailwindcss -i ./styles/widget.css -o ./dist/styles.css --minify",
+    "build:embed": "node scripts/build-embed.mjs"
   },
   "peerDependencies": {
     "openai": ">=6",
@@ -39,12 +46,14 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@tailwindcss/cli": "^4.3.3",
     "@testing-library/dom": "10.4.1",
     "@testing-library/react": "16.3.3",
     "@types/node": "^22.20.1",
     "@types/react": "^19",
     "@types/react-dom": "19.2.7",
     "@vitest/coverage-v8": "5.0.0",
+    "esbuild": "^0.25.0",
     "eslint": "^9",
     "jsdom": "30.0.1",
     "openai": "^7",
@@ -64,10 +73,15 @@
       "./react": {
         "types": "./dist/react.d.ts",
         "default": "./dist/react.js"
-      }
+      },
+      "./styles.css": "./dist/styles.css",
+      "./embed": "./dist/embed.js"
     },
     "types": "./dist/index.d.ts",
     "main": "./dist/index.js"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "bin": {
+    "catalog-concierge": "./bin/catalog-concierge.mjs"
+  }
 }

@@ -30,9 +30,15 @@ export interface StoredTurn {
   at?: string;
   suggestions?: string[];
   productSkus?: string[];
+  /** One reason per `productSkus` entry, in the same order, when there were any. */
+  productNotes?: string[];
   toolCalls?: string[];
   /** Set when the guard turned the message away, so no model call was made. */
   blocked?: string;
+  /** What the customer thought of this answer, if they said. */
+  rating?: "up" | "down";
+  /** What the turn cost in tokens. Absent when the guard answered for free. */
+  usage?: { inputTokens: number; outputTokens: number; cachedInputTokens: number };
 }
 
 /** Reads the `messages` JSON column defensively — it is schemaless by design. */
@@ -68,4 +74,20 @@ export function historyForModel(turns: StoredTurn[]): ConversationTurn[] {
 /** Appends this exchange and trims the thread back to the storage ceiling. */
 export function appendTurns(previous: StoredTurn[], added: StoredTurn[]): StoredTurn[] {
   return [...previous, ...added].slice(-MAX_STORED_TURNS);
+}
+
+/**
+ * The turn a rating belongs to: the most recent answer whose text matches.
+ *
+ * The widget sends the answer it is rating rather than an index, because what
+ * it shows after a restore is a window onto the thread rather than the whole
+ * of it. Two identical answers in one thread would mark the later one, which
+ * is the one the customer is looking at.
+ */
+export function lastRatableTurn(turns: StoredTurn[], answer: string): number {
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const turn = turns[i]!;
+    if (turn.role === "assistant" && !turn.blocked && turn.content === answer) return i;
+  }
+  return -1;
 }

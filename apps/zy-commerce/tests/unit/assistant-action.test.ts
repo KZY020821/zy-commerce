@@ -15,9 +15,9 @@ vi.mock("catalog-concierge", async (importOriginal) => ({
   isAssistantConfigured: vi.fn(),
 }));
 
-import { askConcierge, isAssistantConfigured, type ConciergeReply } from "catalog-concierge";
+import { askConcierge, formatMoney, isAssistantConfigured, type ConciergeReply } from "catalog-concierge";
 import { cookies, headers } from "next/headers";
-import { askAssistantAction, startNewChatAction } from "@/app/[tenant]/(storefront)/assistant/actions";
+import { askAssistantAction, loadChatHistoryAction, rateAnswerAction, startNewChatAction } from "@/app/[tenant]/(storefront)/assistant/actions";
 import { rateLimitStore } from "@/lib/auth/rate-limit";
 import { getTenantDb, requireCurrentTenant } from "@/lib/tenant/current";
 
@@ -39,12 +39,39 @@ function cookieJar(initial?: string) {
   };
 }
 
+interface ProductRow {
+  sku: string;
+  name: string;
+  slug: string;
+  price: number;
+  hasVariants: boolean;
+  stockQuantity: number | null;
+  lowStockThreshold: number | null;
+  images: { url: string }[];
+}
+
+const productRow = (over: Partial<ProductRow> = {}): ProductRow => ({
+  sku: "PAD-1",
+  name: "Atlas Control Paddle",
+  slug: "atlas",
+  price: 22090,
+  hasVariants: false,
+  stockQuantity: 12,
+  lowStockThreshold: 5,
+  images: [{ url: "https://img.test/atlas.png" }],
+  ...over,
+});
+
 function threadStore(existing: { id: string; messages: unknown; messageCount: number } | null = null) {
   return {
     chatConversation: {
       findUnique: vi.fn<(args: unknown) => Promise<typeof existing>>(async () => existing),
       update: vi.fn<(args: unknown) => Promise<object>>(async () => ({})),
       create: vi.fn<(args: unknown) => Promise<object>>(async () => ({})),
+    },
+    product: {
+      findFirst: vi.fn<(args: unknown) => Promise<{ sku: string } | null>>(async () => null),
+      findMany: vi.fn<(args: unknown) => Promise<ProductRow[]>>(async () => []),
     },
   };
 }
@@ -162,6 +189,38 @@ describe("askAssistantAction — what is recorded", () => {
     expect(updated.data.messages).toHaveLength(4);
   });
 
+  it("records what the turn cost in tokens, and nothing when the guard answered", async () => {
+    vi.mocked(askConcierge).mockResolvedValueOnce({ ...modelReply, usage: { inputTokens: 1200, outputTokens: 180, cachedInputTokens: 900 } });
+    await askAssistantAction({ message: "which paddle?" });
+    const paid = db.chatConversation.create.mock.calls[0]![0] as { data: { messages: Array<Record<string, unknown>> } };
+    expect(paid.data.messages[1]).toMatchObject({ usage: { inputTokens: 1200, outputTokens: 180, cachedInputTokens: 900 } });
+
+    db.chatConversation.create.mockClear();
+    vi.mocked(askConcierge).mockResolvedValueOnce({ answer: "It seems like…", suggestions: [], products: [], origin: { kind: "blocked", reason: "no-signal" } });
+    await askAssistantAction({ message: "give me a haiku" });
+    const free = db.chatConversation.create.mock.calls[0]![0] as { data: { messages: Array<Record<string, unknown>> } };
+    expect(free.data.messages[1]).not.toHaveProperty("usage");
+  });
+
+  it("records why each product was shown, so a restored conversation still says it", async () => {
+    vi.mocked(askConcierge).mockResolvedValueOnce({
+      ...modelReply,
+      products: [{ ...modelReply.products[0]!, note: "16mm core, easiest on the arm" }],
+    });
+
+    await askAssistantAction({ message: "which paddle for tennis elbow?" });
+
+    const created = db.chatConversation.create.mock.calls[0]![0] as { data: { messages: Array<Record<string, unknown>> } };
+    expect(created.data.messages[1]).toMatchObject({ productSkus: ["PAD-1"], productNotes: ["16mm core, easiest on the arm"] });
+  });
+
+  it("writes no reasons when the assistant gave none", async () => {
+    await askAssistantAction({ message: "show me paddles" });
+
+    const created = db.chatConversation.create.mock.calls[0]![0] as { data: { messages: Array<Record<string, unknown>> } };
+    expect(created.data.messages[1]).not.toHaveProperty("productNotes");
+  });
+
   it("marks a refused message as blocked, so it is never replayed to the model", async () => {
     vi.mocked(askConcierge).mockResolvedValueOnce({ answer: "It seems like the question is not related…", suggestions: ["Help me choose"], products: [], origin: { kind: "blocked", reason: "no-signal" } });
     await askAssistantAction({ message: "give me a haiku" });
@@ -178,10 +237,10 @@ describe("askAssistantAction — what is recorded", () => {
 
 describe("askAssistantAction — model failures, in words a customer can act on", () => {
   const cases: Array<[string, unknown, RegExp]> = [
-    ["invalid key", new OpenAI.AuthenticationError(401, { message: "bad key" }, "bad key", new Headers()), /API key is invalid/],
-    ["no access", new OpenAI.PermissionDeniedError(403, { message: "denied" }, "denied", new Headers()), /doesn't have access to this model/],
+    ["invalid key", new OpenAI.AuthenticationError(401, { message: "bad key" }, "bad key", new Headers()), /unavailable right now/],
+    ["no access", new OpenAI.PermissionDeniedError(403, { message: "denied" }, "denied", new Headers()), /unavailable right now/],
     ["rate limited", new OpenAI.RateLimitError(429, { message: "slow down" }, "slow down", new Headers()), /busy right now/],
-    ["other API error", new OpenAI.APIError(500, { message: "boom" }, "boom", new Headers()), /couldn't reach its model/],
+    ["other API error", new OpenAI.APIError(500, { message: "boom" }, "boom", new Headers()), /unavailable right now/],
     ["anything else", new Error("unexpected"), /Something went wrong/],
   ];
 
@@ -192,6 +251,18 @@ describe("askAssistantAction — model failures, in words a customer can act on"
       expect(db.chatConversation.create).not.toHaveBeenCalled();
     });
   }
+
+  // A shopper can't fix a key, an account or a quota, and telling them which
+  // vendor is behind the assistant only advertises the plumbing.
+  it("never names the model provider or blames the store owner, and logs the detail instead", async () => {
+    for (const [, error] of cases) {
+      vi.mocked(askConcierge).mockRejectedValueOnce(error);
+      const result = await askAssistantAction({ message: "show me paddles" });
+      const shown = result.ok ? "" : result.error;
+      expect(shown).not.toMatch(/deepseek|openai|api key|store owner|configuration/i);
+      expect(console.error).toHaveBeenCalledWith("[assistant] failed", error);
+    }
+  });
 });
 
 describe("startNewChatAction — New chat starts a new thread on the server", () => {
@@ -214,5 +285,217 @@ describe("startNewChatAction — New chat starts a new thread on the server", ()
 
     expect(db.chatConversation.findUnique).toHaveBeenCalledWith({ where: { tenantId_sessionToken: { tenantId: "t-acme", sessionToken: fresh } } });
     expect(db.chatConversation.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ sessionToken: fresh }) }));
+  });
+});
+
+describe("askAssistantAction — what the shop says about itself", () => {
+  it("passes the store's own information to the assistant", async () => {
+    vi.mocked(requireCurrentTenant).mockResolvedValueOnce({ ...tenant, assistantPolicies: "Delivery: free over RM 200." } as never);
+
+    await askAssistantAction({ message: "do you deliver to Sabah?" });
+
+    expect(askConcierge).toHaveBeenCalledWith(expect.objectContaining({ store: expect.objectContaining({ policies: "Delivery: free over RM 200." }) }), expect.anything());
+  });
+
+  it("passes the words customers use that the catalogue does not", async () => {
+    vi.mocked(requireCurrentTenant).mockResolvedValueOnce({ ...tenant, assistantSynonyms: "shoes, sneakers , " } as never);
+
+    await askAssistantAction({ message: "do you sell shoes?" });
+
+    expect(askConcierge).toHaveBeenCalledWith(expect.objectContaining({ store: expect.objectContaining({ synonyms: ["shoes", "sneakers"] }) }), expect.anything());
+  });
+
+  it("passes none when the shop has written none, so the assistant keeps saying it doesn't know", async () => {
+    await askAssistantAction({ message: "do you deliver to Sabah?" });
+
+    const [options] = vi.mocked(askConcierge).mock.calls[0]!;
+    expect("policies" in options.store).toBe(false);
+    expect("synonyms" in options.store).toBe(false);
+  });
+});
+
+describe("askAssistantAction — the page the question was asked from", () => {
+  it("tells the assistant which product is on screen, resolved from our own catalogue", async () => {
+    db.product.findFirst.mockResolvedValueOnce({ sku: "PAD-1" });
+
+    await askAssistantAction({ message: "is this one good for a beginner?", path: "/products/slk-atlas-max" });
+
+    expect(db.product.findFirst).toHaveBeenCalledWith({ where: { slug: "slk-atlas-max", active: true }, select: { sku: true } });
+    expect(askConcierge).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ viewing: "PAD-1" }));
+  });
+
+  // The browser supplies the path, so it is a lookup key and never content.
+  it("ignores anything that is not a plain product path, without touching the database", async () => {
+    for (const path of ["/", "/products", "/products/../admin", "https://evil.example/products/atlas", "/search?q=paddle", "/products/atlas/reviews"]) {
+      expect((await askAssistantAction({ message: "show me paddles", path })).ok, path).toBe(true);
+    }
+
+    expect(db.product.findFirst).not.toHaveBeenCalled();
+    expect(askConcierge).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ viewing: undefined }));
+  });
+
+  it("passes nothing when the slug is not a product of this store", async () => {
+    db.product.findFirst.mockResolvedValueOnce(null);
+
+    await askAssistantAction({ message: "is this in stock?", path: "/products/some-other-shop" });
+
+    expect(askConcierge).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ viewing: undefined }));
+  });
+});
+
+describe("loadChatHistoryAction — putting the conversation back on screen", () => {
+  const thread = {
+    id: "c-1",
+    messageCount: 4,
+    messages: [
+      { role: "user", content: "which paddle for a beginner?" },
+      { role: "assistant", content: "The Atlas is the gentlest.", suggestions: ["Compare the top two"], productSkus: ["PAD-1", "GONE-9"] },
+    ],
+  };
+
+  it("returns the stored turns with their cards, built exactly like a live reply", async () => {
+    db = threadStore(thread);
+    db.product.findMany.mockResolvedValueOnce([productRow()]);
+    vi.mocked(getTenantDb).mockResolvedValue(db as never);
+
+    expect(await loadChatHistoryAction()).toEqual([
+      { role: "user", content: "which paddle for a beginner?" },
+      {
+        role: "assistant",
+        content: "The Atlas is the gentlest.",
+        suggestions: ["Compare the top two"],
+        // GONE-9 has left the catalogue: the sentence stays, the dead link does not.
+        // The price string comes from the package's own formatter, which is the
+        // point: a restored card must be identical to the one the reply drew.
+        products: [{ ref: "PAD-1", name: "Atlas Control Paddle", url: "/products/atlas", imageUrl: "https://img.test/atlas.png", price: 22090, priceFrom: false, priceLabel: formatMoney(22090, "MYR", "en-MY"), stockLabel: "In stock" }],
+      },
+    ]);
+    expect(db.product.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { active: true, sku: { in: ["PAD-1", "GONE-9"] } } }));
+  });
+
+  it("gives a first-time visitor nothing, and does not hand them a session cookie for looking", async () => {
+    jar = cookieJar();
+    vi.mocked(cookies).mockResolvedValue(jar as never);
+
+    expect(await loadChatHistoryAction()).toEqual([]);
+    expect(jar.set).not.toHaveBeenCalled();
+    expect(getTenantDb).not.toHaveBeenCalled();
+  });
+
+  it("ignores a forged session cookie without querying anything", async () => {
+    jar = cookieJar("not-a-session-token");
+    vi.mocked(cookies).mockResolvedValue(jar as never);
+
+    expect(await loadChatHistoryAction()).toEqual([]);
+    expect(getTenantDb).not.toHaveBeenCalled();
+  });
+
+  it("returns nothing when the store has switched the assistant off", async () => {
+    vi.mocked(requireCurrentTenant).mockResolvedValueOnce({ ...tenant, assistantEnabled: false } as never);
+
+    expect(await loadChatHistoryAction()).toEqual([]);
+    expect(getTenantDb).not.toHaveBeenCalled();
+  });
+
+  it("stops answering one address that asks over and over", async () => {
+    db = threadStore(thread);
+    db.product.findMany.mockResolvedValue([productRow()]);
+    vi.mocked(getTenantDb).mockResolvedValue(db as never);
+
+    for (let i = 0; i < 120; i++) expect((await loadChatHistoryAction()).length).toBe(2);
+    expect(await loadChatHistoryAction()).toEqual([]);
+  });
+
+  it("returns nothing for a thread that has no turns yet", async () => {
+    db = threadStore({ id: "c-2", messageCount: 0, messages: [] });
+    vi.mocked(getTenantDb).mockResolvedValue(db as never);
+
+    expect(await loadChatHistoryAction()).toEqual([]);
+    expect(db.product.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("rateAnswerAction — what the customer thought of an answer", () => {
+  const thread = {
+    id: "c-1",
+    messageCount: 4,
+    messages: [
+      { role: "user", content: "which paddle?" },
+      { role: "assistant", content: "The Atlas.", productSkus: ["PAD-1"] },
+      { role: "user", content: "and the other one?" },
+      { role: "assistant", content: "The Vanguard." },
+    ],
+  };
+
+  const stored = () => (db.chatConversation.update.mock.calls[0]![0] as { data: { messages: Array<Record<string, unknown>> } }).data.messages;
+
+  beforeEach(() => {
+    db = threadStore(thread);
+    vi.mocked(getTenantDb).mockResolvedValue(db as never);
+  });
+
+  it("marks the answer the rating belongs to, and leaves the rest of the thread alone", async () => {
+    await rateAnswerAction({ answer: "The Atlas.", rating: "up" });
+
+    expect(stored()[1]).toMatchObject({ role: "assistant", content: "The Atlas.", rating: "up" });
+    expect(stored()[3]).not.toHaveProperty("rating");
+    expect(stored()).toHaveLength(4);
+  });
+
+  it("ignores an answer that is not in this thread", async () => {
+    await rateAnswerAction({ answer: "Something it never said.", rating: "down" });
+    expect(db.chatConversation.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses nonsense without reading anything", async () => {
+    await rateAnswerAction({ answer: "", rating: "up" });
+    await rateAnswerAction({ answer: "The Atlas.", rating: "sideways" as "up" });
+    await rateAnswerAction({ answer: "x".repeat(4001), rating: "up" });
+
+    expect(getTenantDb).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for a browser with no thread of its own", async () => {
+    jar = cookieJar();
+    vi.mocked(cookies).mockResolvedValue(jar as never);
+
+    await rateAnswerAction({ answer: "The Atlas.", rating: "up" });
+
+    expect(getTenantDb).not.toHaveBeenCalled();
+    expect(jar.set).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for a store that has switched the assistant off", async () => {
+    vi.mocked(requireCurrentTenant).mockResolvedValueOnce({ ...tenant, assistantEnabled: false } as never);
+
+    await rateAnswerAction({ answer: "The Atlas.", rating: "up" });
+
+    expect(getTenantDb).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when this browser has no thread stored", async () => {
+    db = threadStore(null);
+    vi.mocked(getTenantDb).mockResolvedValue(db as never);
+
+    await rateAnswerAction({ answer: "The Atlas.", rating: "up" });
+
+    expect(db.chatConversation.update).not.toHaveBeenCalled();
+  });
+
+  it("stops one session from voting over and over", async () => {
+    for (let i = 0; i < 60; i++) await rateAnswerAction({ answer: "The Atlas.", rating: "up" });
+    db.chatConversation.update.mockClear();
+
+    await rateAnswerAction({ answer: "The Atlas.", rating: "up" });
+
+    expect(db.chatConversation.update).not.toHaveBeenCalled();
+  });
+
+  // A rating is a courtesy: nothing the customer sees may depend on it.
+  it("never throws when the write fails", async () => {
+    db.chatConversation.update.mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(rateAnswerAction({ answer: "The Atlas.", rating: "down" })).resolves.toBeUndefined();
+    expect(console.error).toHaveBeenCalled();
   });
 });

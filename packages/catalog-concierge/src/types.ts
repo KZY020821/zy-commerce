@@ -74,6 +74,26 @@ export interface StoreProfile {
   locale: string;
   /** ISO 3166-1 alpha-2. Helps the model with regional phrasing. */
   country?: string;
+  /**
+   * Words your customers use that your catalogue does not.
+   *
+   * The off-topic guard is built from what the store actually sells, which
+   * makes it exact and a little literal: a shop whose category is "Footwear"
+   * refuses "do you sell shoes?". Put the customer's word here and it is
+   * treated as one of yours. `catalog-concierge evaluate` is how you find
+   * them — every refused question is a candidate.
+   */
+  synonyms?: string[];
+  /**
+   * Free text of everything true about the shop that is not a product:
+   * delivery, returns, opening hours, where it is.
+   *
+   * Customers ask these constantly and a catalogue cannot answer them, so
+   * without this the assistant can only say it does not know. It is the only
+   * non-product source the model may state, it is quoted rather than
+   * paraphrased, and anything it does not cover is still "I don't know".
+   */
+  policies?: string;
 }
 
 /** One exchange in the visible conversation. */
@@ -103,6 +123,41 @@ export interface ProductCard {
   /** Pre-formatted for display, e.g. "RM 352.90". */
   priceLabel: string;
   stockLabel: StockLabel;
+  /**
+   * Why the assistant put this product here, in its own words — "16mm core,
+   * easiest on the arm". Present only when it listed the product itself and
+   * gave a reason for it.
+   */
+  note?: string;
+}
+
+/** What a host hands back for one question: the reply, or why there isn't one. */
+export type AssistantAnswer =
+  | { ok: true; answer: string; suggestions: string[]; products: ProductCard[] }
+  | { ok: false; error: string };
+
+/**
+ * What a streaming host reports while a reply is being put together: the
+ * tools the assistant is using, then the finished reply.
+ */
+export type AssistantStreamEvent =
+  | { kind: "tool"; name: string }
+  | { kind: "answer"; delta: string; restart?: true }
+  | { kind: "reply"; result: AssistantAnswer };
+
+/**
+ * One message of a conversation a host is putting back on screen.
+ *
+ * Hosts that keep history server-side build these from their own record; the
+ * widget renders them above the current conversation. See `loadHistory`.
+ */
+export interface RestoredMessage {
+  role: "user" | "assistant";
+  content: string;
+  suggestions?: string[];
+  products?: ProductCard[];
+  /** A rating the customer already gave this answer, so it is not asked twice. */
+  rating?: "up" | "down";
 }
 
 export type StockStatus = "in_stock" | "low_stock" | "out_of_stock";
