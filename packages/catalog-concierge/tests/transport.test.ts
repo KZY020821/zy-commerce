@@ -4,7 +4,7 @@
  * server that hangs up. None of it may cost the customer their answer.
  */
 import { describe, expect, it, vi } from "vitest";
-import { askEndpoint, askEndpointStream, parseStreamLine, readAssistantStream } from "../src/transport";
+import { askEndpoint, askEndpointStream, loadEndpointHistory, parseStreamLine, readAssistantStream, sendEndpointFeedback, startEndpointChat } from "../src/transport";
 import type { AssistantStreamEvent } from "../src/types";
 
 const reply = { ok: true as const, answer: "The Atlas.", suggestions: ["Compare them"], products: [] };
@@ -95,6 +95,69 @@ describe("askEndpoint", () => {
     vi.stubGlobal("fetch", vi.fn(async () => streamed(['{"type":"status","tool":"search_products"}\n'])));
 
     expect(await askEndpoint("/api/assistant", { message: "which paddle?" })).toEqual({ ok: false, error: "The assistant did not answer. Please try again." });
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("the rest of a conversation over one endpoint", () => {
+  const post = (answer: unknown) => vi.fn(async (_url: string, _init: RequestInit) => (answer instanceof Response ? answer : Response.json(answer)));
+
+  it("loads the earlier messages, keeping only what it can render", async () => {
+    const fetchMock = post({
+      messages: [
+        { role: "user", content: "which paddle?" },
+        {
+          role: "assistant",
+          content: "The Atlas.",
+          suggestions: ["Compare them", 7],
+          products: [{ ref: "PAD-1", name: "Atlas", priceLabel: "RM 220.90", stockLabel: "In stock" }, { ref: 5 }],
+          rating: "up",
+        },
+        { role: "narrator", content: "dropped" },
+        { role: "assistant" },
+      ],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await loadEndpointHistory("/api/assistant")).toEqual([
+      { role: "user", content: "which paddle?" },
+      { role: "assistant", content: "The Atlas.", suggestions: ["Compare them"], products: [{ ref: "PAD-1", name: "Atlas", priceLabel: "RM 220.90", stockLabel: "In stock" }], rating: "up" },
+    ]);
+    const [, historyRequest] = fetchMock.mock.calls[0]!;
+    expect(JSON.parse(String(historyRequest.body))).toEqual({ action: "history" });
+    vi.unstubAllGlobals();
+  });
+
+  it("restores nothing rather than guessing, when the endpoint says something else", async () => {
+    for (const answer of [{ messages: "later" }, {}, new Response("", { status: 500 }), new Response("not json", { status: 200 })]) {
+      vi.stubGlobal("fetch", post(answer));
+      expect(await loadEndpointHistory("/api/assistant")).toEqual([]);
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("sends a rating and does not care what comes back", async () => {
+    const fetchMock = post({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(sendEndpointFeedback("/api/assistant", { answer: "The Atlas.", rating: "down" })).resolves.toBeUndefined();
+    const [, feedbackRequest] = fetchMock.mock.calls[0]!;
+    expect(JSON.parse(String(feedbackRequest.body))).toEqual({ action: "feedback", answer: "The Atlas.", rating: "down" });
+
+    vi.stubGlobal("fetch", post(new Response("", { status: 500 })));
+    await expect(sendEndpointFeedback("/api/assistant", { answer: "The Atlas.", rating: "up" })).resolves.toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
+  // The widget clears the screen on this promise, so a refusal has to be loud.
+  it("throws when the endpoint cannot start a new chat", async () => {
+    vi.stubGlobal("fetch", post({ ok: true }));
+    await expect(startEndpointChat("/api/assistant")).resolves.toBeUndefined();
+
+    for (const answer of [{ ok: false }, {}, new Response("", { status: 500 })]) {
+      vi.stubGlobal("fetch", post(answer));
+      await expect(startEndpointChat("/api/assistant")).rejects.toThrow("could not start a new chat");
+    }
     vi.unstubAllGlobals();
   });
 });

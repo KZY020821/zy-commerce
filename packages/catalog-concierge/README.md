@@ -76,6 +76,7 @@ site — adds one tag:
         data-name="Fit Assistant"
         data-greeting="Hi! Ask me anything about our paddles."
         data-suggestions="Help me choose|What's in stock?"
+        data-features="history,feedback,new-chat"
         data-privacy-note="Chats are kept for 90 days."
         data-handoff-href="https://wa.me/60123456789"
         data-handoff-label="Message us on WhatsApp"
@@ -88,14 +89,27 @@ mounts in a **shadow root**, so the shop's CSS cannot reach in and the widget's
 cannot leak out, and it follows the page into dark mode by watching `<html>`
 for a `dark` class or `data-theme="dark"`.
 
-The one thing the shop must build is the endpoint. It takes
-`POST { "message": "…", "path": "/products/atlas" }` and answers in
-newline-delimited JSON, one object per line:
+The one thing the shop must build is the endpoint — **one route, four things**.
+A message streams back as newline-delimited JSON; everything else about a
+conversation is a plain JSON answer:
 
 ```
-{"type":"status","tool":"search_products"}
-{"type":"reply","result":{"ok":true,"answer":"…","suggestions":["…"],"products":[…]}}
+POST { "message": "…", "path": "/products/atlas" }
+  → {"type":"status","tool":"search_products"}
+    {"type":"reply","result":{"ok":true,"answer":"…","suggestions":["…"],"products":[…]}}
+
+POST { "action": "history" }                              → { "messages": [ … ] }
+POST { "action": "feedback", "answer": "…", "rating": "up" } → { "ok": true }
+POST { "action": "new-chat" }                             → { "ok": true }
 ```
+
+The last three are why an embedded widget can put the conversation back after
+a reload, record what a customer thought of an answer, and start a fresh
+thread — the things a same-origin React host gets from its Server Actions.
+`data-features="history,feedback"` narrows it to what your endpoint actually
+implements, and `data-features="none"` leaves only messages; the widget then
+offers nothing it cannot honour, including hiding **New chat**, because
+clearing the screen while the assistant remembers is worse than no button.
 
 `askConciergeStream` produces exactly those events; see the reference
 implementation in

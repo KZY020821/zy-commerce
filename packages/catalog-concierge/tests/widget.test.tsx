@@ -767,3 +767,14 @@ describe("ConciergeWidget — why this product", () => {
     expect(screen.getByRole("link", { name: /Vanguard/ }).textContent).not.toContain("16mm");
   });
 });
+
+describe("ConciergeWidget — when a new chat is not possible", () => {
+  it("does not offer one, so the screen and the assistant cannot disagree", async () => {
+    renderWidget({ allowNewChat: false });
+    openWidget();
+    await sendAndWait("which paddle?");
+
+    expect(screen.queryByRole("button", { name: "Start a new chat" })).toBeNull();
+    expect(screen.getByText("Here are two options.")).toBeTruthy();
+  });
+});

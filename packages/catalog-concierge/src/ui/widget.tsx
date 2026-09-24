@@ -126,6 +126,15 @@ export interface ConciergeWidgetProps {
    */
   onNewChat?: () => Promise<void> | void;
   /**
+   * Whether to offer **New chat** at all.
+   *
+   * Without `onNewChat` the button clears the screen and nothing else, which
+   * is right for a host that keeps no conversation of its own — and wrong for
+   * one that does, where the assistant would go on remembering what the
+   * customer can no longer see. Set false when the host cannot forget.
+   */
+  allowNewChat?: boolean;
+  /**
    * Puts the conversation the customer already had back on screen, called once
    * when the chat is first opened.
    *
@@ -220,6 +229,7 @@ export function ConciergeWidget({
   onSend,
   onSendStream,
   onNewChat,
+  allowNewChat = true,
   loadHistory,
   onFeedback,
   configured = true,
@@ -498,7 +508,7 @@ export function ConciergeWidget({
             <span className="truncate">{text.subtitle}</span>
           </p>
         </div>
-        {started ? (
+        {started && allowNewChat ? (
           <IconButton label={text.newChat} onClick={startNewChat} disabled={pending || resetting}>
             <NewChatIcon />
           </IconButton>

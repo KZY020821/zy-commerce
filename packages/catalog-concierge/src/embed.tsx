@@ -19,7 +19,7 @@
  */
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { askEndpoint, askEndpointStream } from "./transport";
+import { askEndpoint, askEndpointStream, loadEndpointHistory, sendEndpointFeedback, startEndpointChat } from "./transport";
 import { ConciergeWidget, type ConciergeWidgetProps } from "./ui/widget";
 
 /** Replaced at build time with the contents of `dist/styles.css`. */
@@ -28,8 +28,19 @@ declare const __CONCIERGE_CSS__: string;
 const ROOT_ATTRIBUTE = "data-concierge-root";
 const SCRIPT_SELECTOR = "script[data-concierge]";
 
+/** The parts of a conversation a shop's endpoint has implemented. */
+export type EmbedFeature = "history" | "feedback" | "new-chat";
+
+export const ALL_FEATURES: EmbedFeature[] = ["history", "feedback", "new-chat"];
+
 export interface EmbedConfig {
   endpoint: string;
+  /**
+   * What the endpoint supports beyond answering a message. All of it by
+   * default; `data-features="none"` for an endpoint that only answers, so a
+   * customer is never shown a button the shop cannot honour.
+   */
+  features: EmbedFeature[];
   assistantName: string;
   greeting: string;
   starterSuggestions: string[];
@@ -56,6 +67,7 @@ export function readConfig(script: HTMLScriptElement | null): EmbedConfig | null
   const name = data.name?.trim() || "Assistant";
   return {
     endpoint,
+    features: readFeatures(data.features),
     assistantName: name,
     greeting: data.greeting?.trim() || `Hi! Ask me anything about our products and I'll answer from what we sell.`,
     starterSuggestions: (data.suggestions ?? "").split("|").map((s) => s.trim()).filter(Boolean),
@@ -65,6 +77,13 @@ export function readConfig(script: HTMLScriptElement | null): EmbedConfig | null
     ...(data.shortcutKey !== undefined ? { shortcutKey: data.shortcutKey.trim() || null } : {}),
     ...(data.labels ? { labels: safeLabels(data.labels) } : {}),
   };
+}
+
+/** `data-features="history,feedback"`, or "none". Everything by default. */
+function readFeatures(raw: string | undefined): EmbedFeature[] {
+  if (raw === undefined) return [...ALL_FEATURES];
+  const asked = raw.split(",").map((feature) => feature.trim().toLowerCase());
+  return ALL_FEATURES.filter((feature) => asked.includes(feature));
 }
 
 /** `data-labels` is JSON a shop typed by hand; a typo must not cost them the widget. */
@@ -143,6 +162,7 @@ export function mount(config: EmbedConfig, options: { container?: HTMLElement; c
   shadow.append(style, mountPoint);
   followPageTheme(mountPoint);
 
+  const credentials: RequestInit = { credentials: "include" };
   createRoot(mountPoint).render(
     createElement(ConciergeWidget, {
       assistantName: config.assistantName,
@@ -157,8 +177,16 @@ export function mount(config: EmbedConfig, options: { container?: HTMLElement; c
       // what "this one" means on a product page.
       // `include` so the endpoint's session cookie survives between messages
       // on someone else's site; without it the assistant forgets every turn.
-      onSendStream: (input) => askEndpointStream(config.endpoint, { message: input.message, path: location.pathname }, { credentials: "include" }),
-      onSend: (input) => askEndpoint(config.endpoint, { message: input.message, path: location.pathname }, { credentials: "include" }),
+      onSendStream: (input) => askEndpointStream(config.endpoint, { message: input.message, path: location.pathname }, credentials),
+      onSend: (input) => askEndpoint(config.endpoint, { message: input.message, path: location.pathname }, credentials),
+      // Only what the shop said its endpoint can do. A widget that offers to
+      // start a new chat and then cannot is worse than one that does not ask.
+      ...(config.features.includes("history") ? { loadHistory: () => loadEndpointHistory(config.endpoint, credentials) } : {}),
+      ...(config.features.includes("feedback") ? { onFeedback: (feedback: { answer: string; rating: "up" | "down" }) => sendEndpointFeedback(config.endpoint, feedback, credentials) } : {}),
+      // Offered only when the endpoint can actually forget the thread: the
+      // alternative clears the screen while the assistant remembers.
+      allowNewChat: config.features.includes("new-chat"),
+      ...(config.features.includes("new-chat") ? { onNewChat: () => startEndpointChat(config.endpoint, credentials) } : {}),
     }),
   );
 
