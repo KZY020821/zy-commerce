@@ -19,7 +19,13 @@ exported from `catalog-concierge` and `catalog-concierge/react`, plus the
   enough that reading them per message hurts, and `estimateCost(usage, rates)`
   for what a turn cost.
 - `catalog-concierge/embed` — a `<script>` tag for sites that are not React,
-  mounting in a shadow root with the stylesheet inside it.
+  mounting in a shadow root with the stylesheet inside it. It carries the whole
+  conversation, not just messages: `data-features` says which of history,
+  feedback and new-chat the shop's endpoint implements, and the widget offers
+  only those.
+- `loadEndpointHistory`, `sendEndpointFeedback` and `startEndpointChat`: the
+  rest of a conversation over the same endpoint, as plain JSON actions.
+- `allowNewChat`, for a host that keeps a conversation it cannot forget.
 - `catalog-concierge/styles.css`: a prebuilt stylesheet, so a host that does
   not run Tailwind — or would rather not scan a dependency — gets a styled
   widget from one import. It contains the widget's own classes and nothing

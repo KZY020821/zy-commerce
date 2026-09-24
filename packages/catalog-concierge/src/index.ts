@@ -61,7 +61,7 @@ export { assessCatalogue, countSpecs, type CatalogueReadiness } from "./readines
 export { estimateCost, replyUsage, totalUsage, type CostBreakdown, type TokenRates, type TokenUsage } from "./cost";
 
 // Talking to a host's own streaming endpoint (newline-delimited JSON).
-export { askEndpoint, askEndpointStream, parseStreamLine, readAssistantStream } from "./transport";
+export { askEndpoint, askEndpointStream, loadEndpointHistory, parseStreamLine, readAssistantStream, sendEndpointFeedback, startEndpointChat } from "./transport";
 
 // Formatting helpers used by the assistant, shared so hosts render identically.
 export { formatMoney, specsToRecord, stockLabel, stockStatus, toProductCard, STOCK_LABELS } from "./format";

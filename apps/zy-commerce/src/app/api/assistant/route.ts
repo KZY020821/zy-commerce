@@ -5,6 +5,12 @@
  * and three silent dots make that feel broken. This route streams one line per
  * tool call — searching, opening a product, comparing — and then the answer.
  *
+ * It answers three other things about a conversation too — putting it back on
+ * screen, rating an answer, starting a new one — because a widget embedded on
+ * someone else's site cannot call a Server Action, and a shop should build one
+ * route rather than four. Those share their work with the actions through
+ * `src/lib/ai/conversation.ts`.
+ *
  * It is a Route Handler rather than a Server Action on purpose (the app's one
  * exception to "Route Handlers are for webhooks and Auth.js"): actions are
  * queued one at a time per client and their result arrives in a single piece,
@@ -15,6 +21,7 @@
  */
 import { headers } from "next/headers";
 import { askConciergeStream } from "catalog-concierge";
+import { loadConversation, rateAnswer, startNewChat } from "@/lib/ai/conversation";
 import { beginTurn, customerFacingError, recordTurn, storeProfile } from "@/lib/ai/turn";
 import { allowedEmbedOrigin, originVerdict } from "@/lib/ai/embed-origins";
 import { requestHost } from "@/lib/tenant/resolve";
@@ -67,6 +74,12 @@ export async function POST(request: Request): Promise<Response> {
   const cors = corsHeaders(verdict.kind === "embedded" ? verdict.origin : null);
 
   const body: unknown = await request.json().catch(() => null);
+
+  // Everything about a conversation that is not a message. Plain JSON, since
+  // there is nothing to stream, and the same CORS headers as a message.
+  const action = (body as { action?: unknown } | null)?.action;
+  if (typeof action === "string") return handleAction(action, body, verdict.kind === "embedded", cors);
+
   const started = await beginTurn(body, { crossSite: verdict.kind === "embedded" });
   if (!started.ok) return refusal(started.error, cors);
   const turn = started.turn;
@@ -97,4 +110,25 @@ export async function POST(request: Request): Promise<Response> {
   });
 
   return new Response(stream, { headers: { ...STREAM_HEADERS, ...cors } });
+}
+
+/** History, feedback and new chat: one JSON answer each, no stream to make. */
+async function handleAction(action: string, body: unknown, crossSite: boolean, cors: Record<string, string>): Promise<Response> {
+  const json = (payload: unknown, status = 200) => Response.json(payload, { status, headers: { "cache-control": "no-store", ...cors } });
+
+  if (action === "history") return json({ messages: await loadConversation() });
+
+  if (action === "feedback") {
+    await rateAnswer(body);
+    // Always `ok`: a rating is a courtesy, the widget has already thanked the
+    // customer, and what went wrong belongs in the store's own logs.
+    return json({ ok: true });
+  }
+
+  if (action === "new-chat") {
+    await startNewChat({ crossSite });
+    return json({ ok: true });
+  }
+
+  return json({ ok: false, error: "Unknown action." }, 400);
 }

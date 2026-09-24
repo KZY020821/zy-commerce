@@ -53,7 +53,7 @@ function streamOf(events: ConciergeEvent[], result: ConciergeReply = reply) {
   );
 }
 
-let db: { chatConversation: { findUnique: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> }; product: { findFirst: ReturnType<typeof vi.fn> } };
+let db: { chatConversation: { findUnique: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> }; product: { findFirst: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> } };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -61,7 +61,7 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   db = {
     chatConversation: { findUnique: vi.fn(async () => null), update: vi.fn(async () => ({})), create: vi.fn(async () => ({})) },
-    product: { findFirst: vi.fn(async () => null) },
+    product: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
   };
   vi.mocked(cookies).mockResolvedValue({ get: vi.fn(() => ({ name: "zy_chat_session", value: SESSION })), set: vi.fn() } as never);
   vi.mocked(headers).mockResolvedValue(new Headers({ host: "demo.localhost:3000", "x-forwarded-for": "198.51.100.1" }) as never);
@@ -174,5 +174,79 @@ describe("POST /api/assistant — answering as it works", () => {
     ]);
     expect(console.error).toHaveBeenCalled();
     expect(db.chatConversation.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/assistant — the rest of a conversation", () => {
+  const thread = {
+    id: "c-1",
+    messageCount: 2,
+    messages: [
+      { role: "user", content: "which paddle?" },
+      { role: "assistant", content: "The Atlas.", suggestions: ["Compare them"], productSkus: ["PAD-1"] },
+    ],
+  };
+
+  it("hands back the stored conversation, with its cards", async () => {
+    db.chatConversation.findUnique.mockResolvedValueOnce(thread);
+    db.product.findMany.mockResolvedValueOnce([{ sku: "PAD-1", name: "Atlas", slug: "atlas", price: 22090, hasVariants: false, stockQuantity: 12, lowStockThreshold: 5, images: [] }]);
+
+    const response = await ask({ action: "history" });
+
+    expect(response.headers.get("content-type")).toContain("application/json");
+    const payload = (await response.json()) as { messages: Array<Record<string, unknown>> };
+    expect(payload.messages[1]).toMatchObject({ role: "assistant", content: "The Atlas.", products: [{ ref: "PAD-1" }] });
+  });
+
+  it("records a rating against the answer it belongs to", async () => {
+    db.chatConversation.findUnique.mockResolvedValueOnce(thread);
+
+    expect(await (await ask({ action: "feedback", answer: "The Atlas.", rating: "down" })).json()).toEqual({ ok: true });
+
+    const written = (db.chatConversation.update.mock.calls[0]![0] as { data: { messages: Array<Record<string, unknown>> } }).data.messages;
+    expect(written[1]).toMatchObject({ rating: "down" });
+  });
+
+  it("says ok to a rating it could not use, because the customer has already been thanked", async () => {
+    db.chatConversation.findUnique.mockResolvedValueOnce(null);
+
+    expect(await (await ask({ action: "feedback", answer: "Something it never said.", rating: "up" })).json()).toEqual({ ok: true });
+    expect(db.chatConversation.update).not.toHaveBeenCalled();
+  });
+
+  it("starts a new thread, with a cookie the browser will keep across sites", async () => {
+    const jar = { get: vi.fn(() => ({ name: "zy_chat_session", value: SESSION })), set: vi.fn() };
+    vi.mocked(cookies).mockResolvedValue(jar as never);
+
+    expect(await (await ask({ action: "new-chat" }, { headers: { origin: "https://client.example" } })).json()).toEqual({ ok: true });
+
+    const [name, token, options] = jar.set.mock.calls[0] as unknown as [string, string, Record<string, unknown>];
+    expect(name).toBe("zy_chat_session");
+    expect(token).not.toBe(SESSION);
+    expect(options).toMatchObject({ httpOnly: true, sameSite: "none", secure: true });
+  });
+
+  it("keeps a same-site new chat on a lax cookie", async () => {
+    const jar = { get: vi.fn(() => ({ name: "zy_chat_session", value: SESSION })), set: vi.fn() };
+    vi.mocked(cookies).mockResolvedValue(jar as never);
+
+    await ask({ action: "new-chat" });
+
+    expect(jar.set.mock.calls[0]![2]).toMatchObject({ sameSite: "lax" });
+  });
+
+  it("refuses an action it does not know, and never reaches the model", async () => {
+    const response = await ask({ action: "delete-everything" });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ ok: false, error: "Unknown action." });
+    expect(askConciergeStream).not.toHaveBeenCalled();
+  });
+
+  it("refuses every action from a site the store has not listed", async () => {
+    for (const action of ["history", "feedback", "new-chat"]) {
+      const response = await ask({ action }, { headers: { origin: "https://evil.example" } });
+      expect(await lines(response), action).toEqual([{ type: "reply", result: { ok: false, error: "This request did not come from the store." } }]);
+    }
   });
 });

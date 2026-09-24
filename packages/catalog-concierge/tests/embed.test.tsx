@@ -5,7 +5,7 @@
  */
 import { fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readConfig } from "../src/embed";
+import { ALL_FEATURES, readConfig } from "../src/embed";
 
 const ENDPOINT = "https://shop.example/api/assistant";
 
@@ -63,6 +63,7 @@ describe("readConfig", () => {
       ),
     ).toEqual({
       endpoint: ENDPOINT,
+      features: ["history", "feedback", "new-chat"],
       assistantName: "Fit Assistant",
       greeting: "Hi there.",
       starterSuggestions: ["Help me choose", "What's in stock?"],
@@ -74,10 +75,18 @@ describe("readConfig", () => {
   });
 
   it("needs an endpoint and nothing else", () => {
-    expect(readConfig(script({ endpoint: ENDPOINT }))).toMatchObject({ assistantName: "Assistant", starterSuggestions: [] });
+    expect(readConfig(script({ endpoint: ENDPOINT }))).toMatchObject({ assistantName: "Assistant", starterSuggestions: [], features: ["history", "feedback", "new-chat"] });
     expect(readConfig(script({ name: "Fit Assistant" }))).toBeNull();
     expect(readConfig(script({ endpoint: "   " }))).toBeNull();
     expect(readConfig(null)).toBeNull();
+  });
+
+  it("takes only the features the shop says its endpoint implements", () => {
+    expect(readConfig(script({ endpoint: ENDPOINT, features: "history, FEEDBACK" }))?.features).toEqual(["history", "feedback"]);
+    expect(readConfig(script({ endpoint: ENDPOINT, features: "none" }))?.features).toEqual([]);
+    expect(readConfig(script({ endpoint: ENDPOINT, features: "" }))?.features).toEqual([]);
+    // Nothing said at all means the endpoint is the reference one: all of it.
+    expect(readConfig(script({ endpoint: ENDPOINT }))?.features).toEqual(ALL_FEATURES);
   });
 
   it("ignores hand-typed JSON that is not valid, rather than losing the widget", () => {
@@ -112,7 +121,9 @@ describe("the embed on a page", () => {
         controller.close();
       },
     });
-    const fetchMock = vi.fn(async () => new Response(body, { status: 200 }));
+    const fetchMock = vi.fn(async (_url: string, request: RequestInit) =>
+      JSON.parse(String(request.body)).action === "history" ? Response.json({ messages: [] }) : new Response(body, { status: 200 }),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const { shadow } = await loadEmbed();
@@ -124,9 +135,8 @@ describe("the embed on a page", () => {
     fireEvent.click(inShadow(shadow, "Send")!);
 
     await waitFor(() => expect(shadow!.textContent).toContain("The Atlas."));
-    const [url, request] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
-    expect(url).toBe(ENDPOINT);
-    expect(JSON.parse(String(request.body))).toMatchObject({ message: "which paddle?" });
+    const asked = fetchMock.mock.calls.map(([url, request]) => [url, JSON.parse(String((request as RequestInit).body))] as const);
+    expect(asked.some(([url, body]) => url === ENDPOINT && body.message === "which paddle?")).toBe(true);
   });
 
   it("does nothing at all without an endpoint", async () => {
@@ -160,7 +170,7 @@ describe("the embed on a page", () => {
 });
 
 describe("mounting it by hand", () => {
-  const config = { endpoint: ENDPOINT, assistantName: "Fit Assistant", greeting: "Hi.", starterSuggestions: [] };
+  const config = { endpoint: ENDPOINT, assistantName: "Fit Assistant", greeting: "Hi.", starterSuggestions: [], features: [] };
   const PROPERTY_RULE = '@property --tw-border-style{syntax:"*";inherits:false;initial-value:solid}';
 
   it("puts the stylesheet's property registrations on the page, because a shadow root cannot", async () => {
@@ -223,5 +233,127 @@ describe("mounting it by hand", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const [, second] = fetchMock.mock.calls[1]! as unknown as [string, RequestInit];
     expect(second.credentials).toBe("include");
+  });
+});
+
+describe("the whole conversation, on someone else's site", () => {
+  const config = { endpoint: ENDPOINT, assistantName: "Fit Assistant", greeting: "Hi.", starterSuggestions: [], features: ALL_FEATURES };
+
+  /** An endpoint that answers each action, and records what it was asked. */
+  function endpoint(overrides: { history?: unknown[] } = {}) {
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn(async (_url: string, request: RequestInit) => {
+      const body = JSON.parse(String(request.body)) as Record<string, unknown>;
+      calls.push(body);
+      if (body.action === "history") return Response.json({ messages: overrides.history ?? [] });
+      if (body.action === "feedback" || body.action === "new-chat") return Response.json({ ok: true });
+      const encoder = new TextEncoder();
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode('{"type":"reply","result":{"ok":true,"answer":"The Atlas.","suggestions":[],"products":[]}}\n'));
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return { calls, fetchMock };
+  }
+
+  it("puts the conversation back when the chat is opened", async () => {
+    const { calls } = endpoint({
+      history: [
+        { role: "user", content: "which paddle?" },
+        { role: "assistant", content: "The Atlas.", suggestions: ["Compare them"], rating: "up" },
+      ],
+    });
+    const { mount } = await import("../src/embed");
+
+    const shadow = mount(config);
+    await waitFor(() => expect(shadow.textContent).toContain("Ask Fit Assistant"));
+    fireEvent.click(shadow.querySelector("button")!);
+
+    await waitFor(() => expect(shadow.textContent).toContain("The Atlas."));
+    expect(shadow.textContent).toContain("Earlier in this chat");
+    // Already rated on the earlier visit, so it is not asked for again.
+    expect(shadow.textContent).toContain("Thanks");
+    expect(calls[0]).toEqual({ action: "history" });
+  });
+
+  it("sends a rating, and asks for a new thread before clearing the screen", async () => {
+    const { calls } = endpoint();
+    const { mount } = await import("../src/embed");
+
+    const shadow = mount(config);
+    await waitFor(() => expect(shadow.textContent).toContain("Ask Fit Assistant"));
+    fireEvent.click(shadow.querySelector("button")!);
+    const box = await waitFor(() => shadow.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')!);
+    fireEvent.change(box, { target: { value: "which paddle?" } });
+    fireEvent.click(inShadow(shadow, "Send")!);
+    await waitFor(() => expect(shadow.textContent).toContain("The Atlas."));
+
+    fireEvent.click(inShadow(shadow, "This answer helped")!);
+    await waitFor(() => expect(calls.some((call) => call.action === "feedback")).toBe(true));
+    expect(calls.find((call) => call.action === "feedback")).toEqual({ action: "feedback", answer: "The Atlas.", rating: "up" });
+
+    fireEvent.click(inShadow(shadow, "Start a new chat")!);
+    await waitFor(() => expect(calls.some((call) => call.action === "new-chat")).toBe(true));
+    await waitFor(() => expect(shadow.textContent).not.toContain("The Atlas."));
+  });
+
+  it("keeps the conversation when the endpoint cannot start a new one", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, request: RequestInit) => (JSON.parse(String(request.body)).action === "new-chat" ? new Response("", { status: 500 }) : Response.json({ messages: [{ role: "assistant", content: "The Atlas." }] }))));
+    const { mount } = await import("../src/embed");
+
+    const shadow = mount(config);
+    await waitFor(() => expect(shadow.textContent).toContain("Ask Fit Assistant"));
+    fireEvent.click(shadow.querySelector("button")!);
+    await waitFor(() => expect(shadow.textContent).toContain("The Atlas."));
+
+    fireEvent.click(inShadow(shadow, "Start a new chat")!);
+
+    await waitFor(() => expect(shadow.textContent).toContain("Couldn't start a new chat"));
+    expect(shadow.textContent).toContain("The Atlas.");
+  });
+
+  it("offers none of it to an endpoint that only answers messages", async () => {
+    const { calls } = endpoint();
+    const { mount } = await import("../src/embed");
+
+    const shadow = mount({ ...config, features: [] });
+    await waitFor(() => expect(shadow.textContent).toContain("Ask Fit Assistant"));
+    fireEvent.click(shadow.querySelector("button")!);
+    const box = await waitFor(() => shadow.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')!);
+    fireEvent.change(box, { target: { value: "which paddle?" } });
+    fireEvent.click(inShadow(shadow, "Send")!);
+    await waitFor(() => expect(shadow.textContent).toContain("The Atlas."));
+
+    // No history request, no rating buttons, no New chat to press.
+    expect(calls.every((call) => call.action === undefined)).toBe(true);
+    expect(inShadow(shadow, "This answer helped")).toBeNull();
+    expect(inShadow(shadow, "Start a new chat")).toBeNull();
+  });
+
+  it("reads only the parts of a restored message it understands", async () => {
+    endpoint({
+      history: [
+        { role: "assistant", content: "The Atlas.", suggestions: ["ok", 7], products: [{ ref: "PAD-1", name: "Atlas", priceLabel: "RM 220.90", stockLabel: "In stock" }, { nonsense: true }], rating: "sideways" },
+        { role: "narrator", content: "should be dropped" },
+        { role: "user" },
+      ],
+    });
+    const { mount } = await import("../src/embed");
+
+    const shadow = mount(config);
+    await waitFor(() => expect(shadow.textContent).toContain("Ask Fit Assistant"));
+    fireEvent.click(shadow.querySelector("button")!);
+
+    await waitFor(() => expect(shadow.textContent).toContain("The Atlas."));
+    expect(shadow.textContent).not.toContain("should be dropped");
+    expect(shadow.querySelectorAll("a")).toHaveLength(1);
+    // A rating it does not recognise is no rating: the buttons are still there.
+    expect(inShadow(shadow, "This answer helped")).not.toBeNull();
   });
 });
