@@ -142,6 +142,30 @@ describe("StorefrontAssistant", () => {
     vi.unstubAllGlobals();
   });
 
+  it("shows the answer arriving before the reply lands", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        streamOf([
+          '{"type":"status","tool":"search_products"}\n',
+          '{"type":"answer","delta":"Try the "}\n',
+          '{"type":"answer","delta":"Atlas."}\n',
+          '{"type":"reply","result":{"ok":true,"answer":"Try the Atlas.","suggestions":[],"products":[]}}\n',
+        ]),
+      ),
+    );
+    render(<StorefrontAssistant assistantName="Fit Assistant" greeting="Hi from Acme" starterSuggestions={["Help me choose"]} configured />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask Fit Assistant" }));
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "which paddle?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // The pieces are shown as they arrive and end as one message, not four.
+    expect(await screen.findByText("Try the Atlas.")).toBeTruthy();
+    expect(screen.getAllByText("Try the Atlas.")).toHaveLength(1);
+    expect(askAssistantAction).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it("falls back to the Server Action when the stream cannot answer", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 500 })));
     vi.mocked(askAssistantAction).mockResolvedValue({ ok: true, answer: "Try the Atlas.", suggestions: [], products: [] });

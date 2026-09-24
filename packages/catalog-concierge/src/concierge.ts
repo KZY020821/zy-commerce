@@ -38,6 +38,13 @@ export interface ConciergeOptions {
    * each one. Off by default; see `catalogue-cache.ts` for the trade.
    */
   cache?: CatalogueCacheOptions;
+  /**
+   * Report the answer as the model writes it, rather than when it is finished.
+   *
+   * Off by default: it asserts that the model client handles `stream: true`,
+   * which every OpenAI-compatible SDK does and a test fake need not.
+   */
+  streamAnswer?: boolean;
 }
 
 export interface AskInput {
@@ -125,6 +132,7 @@ export async function* askConciergeStream(options: ConciergeOptions, input: AskI
     history: input.history,
     userMessage: input.message,
     viewing: viewing ? { ref: viewing.ref, name: viewing.name } : undefined,
+    streamAnswer: options.streamAnswer,
   });
 
   // What the model listed, and — when it listed nothing usable — what it was

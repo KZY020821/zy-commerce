@@ -7,7 +7,7 @@
 import type OpenAI from "openai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MessagesClient } from "../src/assistant";
-import { askConcierge, askConciergeStream, ConciergeNotConfiguredError, conciergeStarters } from "../src/concierge";
+import { askConcierge, askConciergeStream, ConciergeNotConfiguredError, conciergeStarters, type ConciergeEvent } from "../src/concierge";
 import { formatMoney } from "../src/format";
 import { OFF_TOPIC_REPLY } from "../src/guard";
 import type { CatalogAdapter, CatalogueProduct, ConversationTurn } from "../src/types";
@@ -87,6 +87,19 @@ function scriptedModel(responses: OpenAI.Chat.Completions.ChatCompletion[]) {
   };
   return { model: { client, modelId: "deepseek-test" }, calls };
 }
+
+/** A model that streams: chunks in, chunks out, exactly as an SDK would. */
+function streamingModel(chunks: Array<Record<string, unknown>>) {
+  const create = vi.fn(async () => ({
+    async *[Symbol.asyncIterator]() {
+      for (const chunk of chunks) yield chunk as never;
+    },
+  }));
+  return { model: { client: { chat: { completions: { create } } } as never, modelId: "deepseek-test" }, create };
+}
+
+/** One chunk of a `respond` call's arguments arriving. */
+const respondChunk = (args: string, index = 0) => ({ choices: [{ index: 0, delta: { tool_calls: [{ index, id: "call_1", type: "function", function: { name: "respond", arguments: args } }] } }] });
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -373,11 +386,11 @@ describe("askConcierge — the product the customer is looking at", () => {
 
 describe("askConciergeStream — saying what it is doing while it does it", () => {
   /** Drains a stream, keeping every event it reported on the way. */
-  async function collect(stream: AsyncGenerator<{ kind: "tool"; name: string }, Awaited<ReturnType<typeof askConcierge>>>) {
+  async function collect(stream: AsyncGenerator<ConciergeEvent, Awaited<ReturnType<typeof askConcierge>>>) {
     const events: string[] = [];
     let step = await stream.next();
     while (!step.done) {
-      events.push(step.value.name);
+      events.push(step.value.kind === "tool" ? step.value.name : `answer:${step.value.delta}`);
       step = await stream.next();
     }
     return { events, reply: step.value };
@@ -450,5 +463,187 @@ describe("askConcierge — why each product is on the card", () => {
 
     expect(reply.products.map((p) => p.ref)).toEqual(["PAD-1"]);
     expect(reply.products[0]!.note).toBeUndefined();
+  });
+});
+
+describe("askConciergeStream — the answer as it is written", () => {
+  async function collectStream(stream: AsyncGenerator<ConciergeEvent, Awaited<ReturnType<typeof askConcierge>>>) {
+    const deltas: string[] = [];
+    let step = await stream.next();
+    while (!step.done) {
+      if (step.value.kind === "answer") deltas.push(step.value.delta);
+      step = await stream.next();
+    }
+    return { deltas, reply: step.value };
+  }
+
+  it("reports the answer in pieces, then returns the finished reply", async () => {
+    const { model } = streamingModel([
+      respondChunk('{"answer":"The Atlas'),
+      respondChunk(' suits beginners.'),
+      respondChunk('","suggestions":["Compare them"],"productRefs":["PAD-1"],"productNotes":["16mm core"]}'),
+      { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 900, completion_tokens: 120, prompt_tokens_details: { cached_tokens: 600 } } },
+    ]);
+
+    const { deltas, reply } = await collectStream(askConciergeStream({ store, adapter: makeAdapter(), model, streamAnswer: true }, { message: "which paddle for a beginner?", history: [] }));
+
+    expect(deltas).toEqual(["The Atlas", " suits beginners."]);
+    expect(deltas.join("")).toBe(reply.answer);
+    expect(reply.suggestions).toEqual(["Compare them"]);
+    expect(reply.products.map((p) => ({ ref: p.ref, note: p.note }))).toEqual([{ ref: "PAD-1", note: "16mm core" }]);
+    expect(reply.usage).toEqual({ inputTokens: 900, outputTokens: 120, cachedInputTokens: 600 });
+  });
+
+  it("never sends the same character twice, however the chunks fall", async () => {
+    const whole = '{"answer":"Both are 16mm \\"control\\" paddles.\\nThe Atlas is lighter.","suggestions":[],"productRefs":[],"productNotes":[]}';
+    const { model } = streamingModel([...Array.from({ length: whole.length }, (_, i) => respondChunk(whole[i]!)), { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }]);
+
+    const { deltas, reply } = await collectStream(askConciergeStream({ store, adapter: makeAdapter(), model, streamAnswer: true }, { message: "compare the paddles", history: [] }));
+
+    expect(deltas.join("")).toBe('Both are 16mm "control" paddles.\nThe Atlas is lighter.');
+    expect(reply.answer).toBe(deltas.join(""));
+  });
+
+  it("streams a plain-text answer too, for a model that never calls respond", async () => {
+    const { model } = streamingModel([
+      { choices: [{ index: 0, delta: { content: "We stock " } }] },
+      { choices: [{ index: 0, delta: { content: "three paddles." } }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+    ]);
+
+    const { deltas, reply } = await collectStream(askConciergeStream({ store, adapter: makeAdapter(), model, streamAnswer: true }, { message: "what paddles do you have?", history: [] }));
+
+    expect(deltas).toEqual(["We stock ", "three paddles."]);
+    expect(reply.answer).toBe("We stock three paddles.");
+  });
+
+  it("says nothing until the answer starts, while it is using its tools", async () => {
+    // Two rounds: the first opens a product, the second answers.
+    const lookingUp = streamingModel([
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: "get_product", arguments: '{"ref":"PAD-1"}' } }] } }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+    ]);
+    const answering = streamingModel([respondChunk('{"answer":"The Atlas.","suggestions":[],"productRefs":[],"productNotes":[]}'), { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }]);
+    const rounds = [lookingUp.create, answering.create];
+    let round = 0;
+    const client = { chat: { completions: { create: async () => rounds[Math.min(round++, rounds.length - 1)]!() } } };
+
+    const { deltas, reply } = await collectStream(
+      askConciergeStream({ store, adapter: makeAdapter(), model: { client: client as never, modelId: "deepseek-test" }, streamAnswer: true }, { message: "tell me about the atlas", history: [] }),
+    );
+
+    expect(deltas).toEqual(["The Atlas."]);
+    expect(reply.origin).toMatchObject({ kind: "model", toolCalls: ["get_product"] });
+  });
+
+  // Models emit several tool calls in one round, their chunks interleaved and
+  // in no particular order; they have to be reassembled by index.
+  it("puts two tool calls back together in the order the model numbered them", async () => {
+    const lookingUp = streamingModel([
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 1, id: "c2", type: "function", function: { name: "get_product", arguments: '{"ref":"PAD-' } }] } }] },
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: "search_products", arguments: '{"query":"paddle","category":null,"minPrice":null,"maxPrice":null,"inStockOnly":false}' } }] } }] },
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 1, function: { arguments: '2"}' } }] } }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+    ]);
+    const answering = streamingModel([respondChunk('{"answer":"Both are good.","suggestions":[],"productRefs":[],"productNotes":[]}'), { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }]);
+    const rounds = [lookingUp.create, answering.create];
+    let round = 0;
+    const client = { chat: { completions: { create: async () => rounds[Math.min(round++, rounds.length - 1)]!() } } };
+
+    const { reply } = await collectStream(
+      askConciergeStream({ store, adapter: makeAdapter(), model: { client: client as never, modelId: "deepseek-test" }, streamAnswer: true }, { message: "compare the paddles", history: [] }),
+    );
+
+    expect(reply.origin).toMatchObject({ kind: "model", toolCalls: ["search_products", "get_product"] });
+    expect(reply.answer).toBe("Both are good.");
+  });
+
+  it("handles a refusal, and the usage-only chunk providers send at the end", async () => {
+    const { model } = streamingModel([
+      { choices: [{ index: 0, delta: { refusal: "I can't help" } }] },
+      { choices: [{ index: 0, delta: { refusal: " with that." } }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: "content_filter" }] },
+      // DeepSeek's last chunk carries usage and no choice at all.
+      { choices: [], usage: { prompt_tokens: 120, completion_tokens: 8, prompt_tokens_details: { cached_tokens: 0 } } },
+    ]);
+
+    const { deltas, reply } = await collectStream(askConciergeStream({ store, adapter: makeAdapter(), model, streamAnswer: true }, { message: "which paddle?", history: [] }));
+
+    expect(deltas).toEqual([]);
+    expect(reply.answer).toMatch(/can't help with that request/);
+    expect(reply.usage).toEqual({ inputTokens: 120, outputTokens: 8, cachedInputTokens: 0 });
+  });
+
+  it("does not stream at all unless the host asked for it", async () => {
+    const { model } = scriptedModel([respondWith({ answer: "The Atlas." })]);
+
+    const { deltas, reply } = await collectStream(askConciergeStream({ store, adapter: makeAdapter(), model }, { message: "which paddle?", history: [] }));
+
+    expect(deltas).toEqual([]);
+    expect(reply.answer).toBe("The Atlas.");
+  });
+});
+
+describe("askConciergeStream — thinking out loud, then answering", () => {
+  it("tells the host to start again when the real answer begins", async () => {
+    const narrating = streamingModel([
+      // The model narrates before it reaches for a tool…
+      { choices: [{ index: 0, delta: { content: "I'll look for beginner paddles." } }] },
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: "search_products", arguments: '{"query":"paddle","category":null,"minPrice":null,"maxPrice":null,"inStockOnly":false}' } }] } }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+    ]);
+    const answering = streamingModel([respondChunk('{"answer":"The Atlas'), respondChunk(' suits beginners.","suggestions":[],"productRefs":[],"productNotes":[]}'), { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }]);
+    const rounds = [narrating.create, answering.create];
+    let round = 0;
+    const client = { chat: { completions: { create: async () => rounds[Math.min(round++, rounds.length - 1)]!() } } };
+
+    const events: Array<{ delta: string; restart?: true }> = [];
+    const stream = askConciergeStream({ store, adapter: makeAdapter(), model: { client: client as never, modelId: "deepseek-test" }, streamAnswer: true }, { message: "which paddle for a beginner?", history: [] });
+    let step = await stream.next();
+    while (!step.done) {
+      if (step.value.kind === "answer") events.push({ delta: step.value.delta, ...(step.value.restart ? { restart: true } : {}) });
+      step = await stream.next();
+    }
+
+    expect(events).toEqual([
+      { delta: "I'll look for beginner paddles." },
+      // The real answer starts here: whatever was on screen goes.
+      { delta: "The Atlas", restart: true },
+      { delta: " suits beginners." },
+    ]);
+    expect(step.value.answer).toBe("The Atlas suits beginners.");
+  });
+});
+
+describe("askConciergeStream — a second thought", () => {
+  it("replaces the last thought rather than running into it", async () => {
+    const first = streamingModel([
+      { choices: [{ index: 0, delta: { content: "I'll look that up now." } }] },
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: "search_products", arguments: '{"query":"paddle","category":null,"minPrice":null,"maxPrice":null,"inStockOnly":false}' } }] } }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+    ]);
+    const second = streamingModel([
+      { choices: [{ index: 0, delta: { content: "I need the weight specs." } }] },
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "c2", type: "function", function: { name: "get_product", arguments: '{"ref":"PAD-1"}' } }] } }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+    ]);
+    const third = streamingModel([respondChunk('{"answer":"The Atlas is lightest.","suggestions":[],"productRefs":[],"productNotes":[]}'), { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }]);
+    const rounds = [first.create, second.create, third.create];
+    let round = 0;
+    const client = { chat: { completions: { create: async () => rounds[Math.min(round++, rounds.length - 1)]!() } } };
+
+    const events: Array<{ delta: string; restart?: true }> = [];
+    const stream = askConciergeStream({ store, adapter: makeAdapter(), model: { client: client as never, modelId: "deepseek-test" }, streamAnswer: true }, { message: "what is your lightest paddle?", history: [] });
+    let step = await stream.next();
+    while (!step.done) {
+      if (step.value.kind === "answer") events.push({ delta: step.value.delta, ...(step.value.restart ? { restart: true } : {}) });
+      step = await stream.next();
+    }
+
+    expect(events).toEqual([
+      { delta: "I'll look that up now." },
+      { delta: "I need the weight specs.", restart: true },
+      { delta: "The Atlas is lightest.", restart: true },
+    ]);
   });
 });

@@ -253,6 +253,8 @@ export function ConciergeWidget({
   const [restoring, setRestoring] = useState(false);
   /** The tool the assistant is using right now, when the host reports it. */
   const [working, setWorking] = useState<string | null>(null);
+  /** The answer so far, when the host streams it as the model writes it. */
+  const [draft, setDraft] = useState("");
   const [fullScreen, setFullScreen] = useState(false);
   /** Height of the part of the screen the browser is actually showing. */
   const [visibleHeight, setVisibleHeight] = useState<number | null>(null);
@@ -397,6 +399,7 @@ export function ConciergeWidget({
     startTransition(async () => {
       const result = await answer({ message, history });
       setWorking(null);
+      setDraft("");
       setMessages((prev) =>
         result.ok
           ? [...prev, { role: "assistant", content: result.answer, suggestions: result.suggestions, products: result.products }]
@@ -430,12 +433,19 @@ export function ConciergeWidget({
       try {
         for await (const event of onSendStream(input)) {
           if (event.kind === "reply") return event.result;
-          setWorking(event.name);
+          if (event.kind === "tool") setWorking(event.name);
+          // The answer as it is written: shown straight away, and replaced by
+          // the finished reply — which carries the cards — when it lands. A
+          // `restart` means the model was thinking out loud and has now begun
+          // the real answer, so what is on screen is replaced rather than
+          // added to.
+          else setDraft((soFar) => (event.restart ? event.delta : soFar + event.delta));
         }
       } catch {
         // Falls through to the plain transport below.
       }
       setWorking(null);
+      setDraft("");
     }
     return onSend(input);
   }
@@ -629,7 +639,16 @@ export function ConciergeWidget({
             </Fragment>
           ))}
 
-          {pending ? (
+          {pending && draft ? (
+            <div className="flex justify-start">
+              {/* The answer as it arrives. It becomes a real message — with
+                  its cards and chips — the moment the reply lands. */}
+              <div role="status" className="max-w-[92%] rounded-2xl rounded-bl-md bg-muted px-3.5 py-2.5 text-[0.9375rem] leading-relaxed break-words whitespace-pre-line">
+                {draft}
+                <span aria-hidden className="ml-0.5 inline-block h-4 w-px translate-y-0.5 bg-foreground/60 motion-safe:animate-pulse" />
+              </div>
+            </div>
+          ) : pending ? (
             <div className="flex justify-start">
               <div role="status" className="flex items-center gap-2 rounded-2xl rounded-bl-md bg-muted px-4 py-3">
                 <span className="flex items-center gap-1">

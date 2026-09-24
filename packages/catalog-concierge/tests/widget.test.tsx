@@ -778,3 +778,108 @@ describe("ConciergeWidget — when a new chat is not possible", () => {
     expect(screen.getByText("Here are two options.")).toBeTruthy();
   });
 });
+
+describe("ConciergeWidget — the answer as it is written", () => {
+  /** A host that streams, one event at a time, on demand. */
+  function scriptedAnswer(events: WidgetStreamEvent[]) {
+    const released: Array<() => void> = [];
+    const stream = async function* () {
+      for (const event of events) {
+        await new Promise<void>((resolve) => released.push(resolve));
+        yield event;
+      }
+    };
+    return { stream: vi.fn(() => stream()), next: async () => { released.shift()?.(); await Promise.resolve(); } };
+  }
+
+  it("shows the answer growing, then replaces it with the finished reply and its cards", async () => {
+    const { stream, next } = scriptedAnswer([
+      { kind: "tool", name: "search_products" },
+      { kind: "answer", delta: "Here are " },
+      { kind: "answer", delta: "two options." },
+      { kind: "reply", result: replied },
+    ]);
+    renderWidget({ onSendStream: stream });
+    openWidget();
+    type("which paddle?");
+    fireEvent.click(sendButton());
+
+    await next();
+    expect((await screen.findByRole("status")).textContent).toContain("Searching the catalogue…");
+
+    await next();
+    expect((await screen.findByRole("status")).textContent).toContain("Here are ");
+    // The dots are gone once there are words to read.
+    expect(screen.getByRole("status").querySelectorAll(".motion-safe\\:animate-bounce")).toHaveLength(0);
+
+    await next();
+    expect((await screen.findByRole("status")).textContent).toContain("Here are two options.");
+
+    await next();
+    await screen.findByRole("link", { name: /Atlas Control Paddle/ });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getAllByText("Here are two options.")).toHaveLength(1);
+  });
+
+  it("clears the half-written answer when the stream fails, rather than leaving it on screen", async () => {
+    const onSendStream = vi.fn(async function* (): AsyncGenerator<WidgetStreamEvent> {
+      yield { kind: "answer", delta: "Here are " };
+      throw new Error("connection lost");
+    });
+    const { onSend } = renderWidget({ onSendStream });
+    openWidget();
+    await sendAndWait("which paddle?");
+
+    expect(onSend).toHaveBeenCalled();
+    expect(screen.getAllByText("Here are two options.")).toHaveLength(1);
+    expect(screen.queryByText("Here are ")).toBeNull();
+  });
+
+  it("starts each answer from nothing", async () => {
+    const onSendStream = vi.fn<NonNullable<ConciergeWidgetProps["onSendStream"]>>();
+    onSendStream.mockImplementationOnce(async function* () {
+      yield { kind: "answer", delta: "First answer." };
+      yield { kind: "reply", result: replied };
+    });
+    let release!: () => void;
+    onSendStream.mockImplementationOnce(async function* () {
+      yield { kind: "answer", delta: "Second answer." };
+      await new Promise<void>((resolve) => (release = resolve));
+      yield { kind: "reply", result: replied };
+    });
+
+    renderWidget({ onSendStream });
+    openWidget();
+    await sendAndWait("first question");
+
+    type("second question");
+    fireEvent.click(sendButton());
+
+    // The second answer starts empty: none of the first is carried over.
+    expect((await screen.findByRole("status")).textContent).toBe("Second answer.");
+    release();
+  });
+});
+
+describe("ConciergeWidget — when the model thinks out loud first", () => {
+  it("replaces what it was saying once the real answer begins", async () => {
+    const onSendStream = vi.fn<NonNullable<ConciergeWidgetProps["onSendStream"]>>();
+    let release!: () => void;
+    onSendStream.mockImplementation(async function* () {
+      yield { kind: "answer", delta: "I'll look for beginner paddles." };
+      yield { kind: "answer", delta: "The Atlas", restart: true };
+      yield { kind: "answer", delta: " suits beginners." };
+      await new Promise<void>((resolve) => (release = resolve));
+      yield { kind: "reply", result: replied };
+    });
+    renderWidget({ onSendStream });
+    openWidget();
+    type("which paddle?");
+    fireEvent.click(sendButton());
+
+    const status = await screen.findByRole("status");
+    expect(status.textContent).toBe("The Atlas suits beginners.");
+    expect(status.textContent).not.toContain("I'll look");
+    release();
+  });
+});
