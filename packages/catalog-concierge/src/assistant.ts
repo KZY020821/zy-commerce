@@ -304,7 +304,8 @@ export async function* runAssistantEvents(opts: RunOptions): AsyncGenerator<Assi
  * machine input: showing a customer half a search query would be noise, and
  * the tools themselves are already reported as they are used.
  */
-type RoundEvent = { kind: "tool"; name: string } | { kind: "answer"; delta: string; source: "content" | "respond" };
+/** What a streamed round reports: the answer, as it is written. Tools are the loop's to announce, when it runs them. */
+type RoundEvent = { kind: "answer"; delta: string; source: "content" | "respond" };
 
 /**
  * A round's events as the host sees them.
@@ -325,12 +326,6 @@ async function* reportRound(
 
   while (!step.done) {
     const event = step.value;
-    if (event.kind === "tool") {
-      yield event;
-      step = await round.next();
-      continue;
-    }
-
     const restart = !spokeThisRound && wasThinkingAloud();
     spokeThisRound = true;
     setThinkingAloud(event.source === "content");
