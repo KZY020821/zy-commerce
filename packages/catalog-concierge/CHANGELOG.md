@@ -26,6 +26,10 @@ exported from `catalog-concierge` and `catalog-concierge/react`, plus the
 - `loadEndpointHistory`, `sendEndpointFeedback` and `startEndpointChat`: the
   rest of a conversation over the same endpoint, as plain JSON actions.
 - `allowNewChat`, for a host that keeps a conversation it cannot forget.
+- `productActions` / `onProductAction`: buttons under every card for a shop
+  whose site can act on them, published from the embed as a
+  `concierge:product-action` event on the page.
+- Dragging the header down closes the panel on a phone.
 - `catalog-concierge/styles.css`: a prebuilt stylesheet, so a host that does
   not run Tailwind — or would rather not scan a dependency — gets a styled
   widget from one import. It contains the widget's own classes and nothing

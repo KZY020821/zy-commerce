@@ -287,9 +287,39 @@ Every fixed word in the widget comes from `labels`. Pass the ones you want chang
 
 `privacyNote` is one line under the message box saying what happens to what the customer types. Nothing is shown unless you pass it — only you know what your integration stores.
 
+### Letting a card do something
+
+A card links to the product page. If the shop's own site can do more — add to
+cart, take an email for a restock — give the widget the buttons and it hands
+back which one was pressed:
+
+```tsx
+<ConciergeWidget
+  productActions={[{ label: "Add to cart", action: "add-to-cart" }]}
+  onProductAction={({ action, product }) => cart.add(product.ref)}
+  …
+/>
+```
+
+Nothing is shown without `onProductAction`: a button that does nothing is
+worse than no button. From the `<script>` embed, where there is no callback to
+give, name them on the tag and listen on the page:
+
+```html
+<script … data-product-actions="Add to cart:add-to-cart|Notify me:notify"></script>
+<script>
+  window.addEventListener("concierge:product-action", (event) => {
+    const { action, product } = event.detail;   // product.ref, product.name, …
+  });
+</script>
+```
+
 ### On a phone
 
 Below 640px the panel covers the screen, and behaves accordingly: it is a modal dialog, Tab stays inside it, and it resizes to the space the on-screen keyboard leaves so the send button is never under the keyboard. It also keeps clear of the home indicator. On a larger screen it is a 420px panel in the corner that does not trap focus.
+
+Dragging the header downwards closes it, the way a sheet does — only the
+header, because a drag anywhere else is someone scrolling the conversation.
 
 Scrolling back through a long answer no longer means missing the next one: new replies stop pulling the view down, and a **Jump to latest** button appears until you are back at the bottom.
 

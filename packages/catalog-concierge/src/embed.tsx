@@ -26,6 +26,9 @@ import { ConciergeWidget, type ConciergeWidgetProps } from "./ui/widget";
 declare const __CONCIERGE_CSS__: string;
 
 const ROOT_ATTRIBUTE = "data-concierge-root";
+
+/** What a shop listens for: `window.addEventListener("concierge:product-action", …)`. */
+export const PRODUCT_ACTION_EVENT = "concierge:product-action";
 const SCRIPT_SELECTOR = "script[data-concierge]";
 
 /** The parts of a conversation a shop's endpoint has implemented. */
@@ -49,6 +52,8 @@ export interface EmbedConfig {
   placeholder?: string;
   shortcutKey?: string | null;
   labels?: ConciergeWidgetProps["labels"];
+  /** Buttons under every card. Pressed, they become a `window` event. */
+  productActions: { label: string; action: string }[];
 }
 
 /** The script tag that loaded this file, or one that marked itself. */
@@ -76,7 +81,24 @@ export function readConfig(script: HTMLScriptElement | null): EmbedConfig | null
     ...(data.placeholder?.trim() ? { placeholder: data.placeholder.trim() } : {}),
     ...(data.shortcutKey !== undefined ? { shortcutKey: data.shortcutKey.trim() || null } : {}),
     ...(data.labels ? { labels: safeLabels(data.labels) } : {}),
+    productActions: readProductActions(data.productActions),
   };
+}
+
+/**
+ * `data-product-actions="Add to cart:add-to-cart|Notify me:notify"`.
+ *
+ * The label is what the customer reads, the action is what the shop's own
+ * code listens for. An entry with no action is skipped rather than guessed at.
+ */
+function readProductActions(raw: string | undefined): { label: string; action: string }[] {
+  return (raw ?? "")
+    .split("|")
+    .map((entry) => {
+      const [label, action] = entry.split(":");
+      return { label: (label ?? "").trim(), action: (action ?? "").trim() };
+    })
+    .filter((entry) => entry.label && entry.action);
 }
 
 /** `data-features="history,feedback"`, or "none". Everything by default. */
@@ -173,6 +195,17 @@ export function mount(config: EmbedConfig, options: { container?: HTMLElement; c
       placeholder: config.placeholder,
       labels: config.labels,
       ...(config.shortcutKey !== undefined ? { shortcutKey: config.shortcutKey } : {}),
+      productActions: config.productActions,
+      // A shop without React has no callback to give, so a pressed button
+      // becomes an event on its own page: three lines of JavaScript to catch,
+      // and nothing about the widget to learn.
+      ...(config.productActions.length > 0
+        ? {
+            onProductAction: (choice: { action: string; product: unknown }) => {
+              window.dispatchEvent(new CustomEvent(PRODUCT_ACTION_EVENT, { detail: choice }));
+            },
+          }
+        : {}),
       // The page the question was asked from, which is how the assistant knows
       // what "this one" means on a product page.
       // `include` so the endpoint's session cookie survives between messages
