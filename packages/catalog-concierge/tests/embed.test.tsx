@@ -5,7 +5,7 @@
  */
 import { fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ALL_FEATURES, readConfig } from "../src/embed";
+import { ALL_FEATURES, PRODUCT_ACTION_EVENT, readConfig } from "../src/embed";
 
 const ENDPOINT = "https://shop.example/api/assistant";
 
@@ -64,6 +64,7 @@ describe("readConfig", () => {
     ).toEqual({
       endpoint: ENDPOINT,
       features: ["history", "feedback", "new-chat"],
+      productActions: [],
       assistantName: "Fit Assistant",
       greeting: "Hi there.",
       starterSuggestions: ["Help me choose", "What's in stock?"],
@@ -170,7 +171,7 @@ describe("the embed on a page", () => {
 });
 
 describe("mounting it by hand", () => {
-  const config = { endpoint: ENDPOINT, assistantName: "Fit Assistant", greeting: "Hi.", starterSuggestions: [], features: [] };
+  const config = { endpoint: ENDPOINT, assistantName: "Fit Assistant", greeting: "Hi.", starterSuggestions: [], features: [], productActions: [] };
   const PROPERTY_RULE = '@property --tw-border-style{syntax:"*";inherits:false;initial-value:solid}';
 
   it("puts the stylesheet's property registrations on the page, because a shadow root cannot", async () => {
@@ -237,7 +238,7 @@ describe("mounting it by hand", () => {
 });
 
 describe("the whole conversation, on someone else's site", () => {
-  const config = { endpoint: ENDPOINT, assistantName: "Fit Assistant", greeting: "Hi.", starterSuggestions: [], features: ALL_FEATURES };
+  const config = { endpoint: ENDPOINT, assistantName: "Fit Assistant", greeting: "Hi.", starterSuggestions: [], features: ALL_FEATURES, productActions: [] };
 
   /** An endpoint that answers each action, and records what it was asked. */
   function endpoint(overrides: { history?: unknown[] } = {}) {
@@ -355,5 +356,81 @@ describe("the whole conversation, on someone else's site", () => {
     expect(shadow.querySelectorAll("a")).toHaveLength(1);
     // A rating it does not recognise is no rating: the buttons are still there.
     expect(inShadow(shadow, "This answer helped")).not.toBeNull();
+  });
+});
+
+describe("card actions on a site with no React", () => {
+  it("reads them off the tag and publishes a pressed one as a page event", async () => {
+    const encoder = new TextEncoder();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, request: RequestInit) =>
+        JSON.parse(String(request.body)).action === "history"
+          ? Response.json({
+              messages: [{ role: "assistant", content: "The Atlas.", products: [{ ref: "PAD-1", name: "Atlas", priceLabel: "RM 220.90", stockLabel: "In stock" }] }],
+            })
+          : new Response(new ReadableStream<Uint8Array>({ start: (c) => { c.enqueue(encoder.encode("{}\n")); c.close(); } }), { status: 200 }),
+      ),
+    );
+    const heard: Array<{ action: string; product: { ref: string } }> = [];
+    window.addEventListener(PRODUCT_ACTION_EVENT, (event) => heard.push((event as CustomEvent).detail));
+
+    const { mount, readConfig } = await import("../src/embed");
+    const script = document.createElement("script");
+    script.dataset.endpoint = ENDPOINT;
+    script.dataset.productActions = "Add to cart:add-to-cart | Notify me:notify | Broken entry";
+    const config = readConfig(script)!;
+    expect(config.productActions).toEqual([
+      { label: "Add to cart", action: "add-to-cart" },
+      { label: "Notify me", action: "notify" },
+    ]);
+
+    const shadow = mount(config);
+    await waitFor(() => expect(shadow.textContent).toContain("Ask Assistant"));
+    fireEvent.click(shadow.querySelector("button")!);
+    await waitFor(() => expect(shadow.textContent).toContain("The Atlas."));
+
+    fireEvent.click([...shadow.querySelectorAll("button")].find((button) => button.textContent === "Add to cart")!);
+
+    expect(heard).toHaveLength(1);
+    expect(heard[0]).toMatchObject({ action: "add-to-cart", product: { ref: "PAD-1" } });
+  });
+
+  it("shows no buttons when the tag names none", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ messages: [{ role: "assistant", content: "The Atlas.", products: [{ ref: "PAD-1", name: "Atlas", priceLabel: "RM 220.90", stockLabel: "In stock" }] }] })));
+    const { mount } = await import("../src/embed");
+
+    const shadow = mount({ endpoint: ENDPOINT, assistantName: "Fit Assistant", greeting: "Hi.", starterSuggestions: [], features: ALL_FEATURES, productActions: [] });
+    await waitFor(() => expect(shadow.textContent).toContain("Ask Fit Assistant"));
+    fireEvent.click(shadow.querySelector("button")!);
+    await waitFor(() => expect(shadow.textContent).toContain("The Atlas."));
+
+    expect([...shadow.querySelectorAll("button")].some((button) => button.textContent === "Add to cart")).toBe(false);
+  });
+});
+
+describe("the embed's keyboard shortcut", () => {
+  it("takes the letter from the tag", async () => {
+    const { mount } = await import("../src/embed");
+
+    const shadow = mount({ endpoint: ENDPOINT, assistantName: "Fit Assistant", greeting: "Hi.", starterSuggestions: [], features: [], productActions: [], shortcutKey: "j" });
+    await waitFor(() => expect(shadow.textContent).toContain("Ask Fit Assistant"));
+
+    fireEvent.keyDown(document, { key: "j", ctrlKey: true, shiftKey: true });
+
+    await waitFor(() => expect(shadow.querySelector('[role="dialog"]')).not.toBeNull());
+  });
+
+  it("binds nothing when the tag turns it off", async () => {
+    const { readConfig, mount } = await import("../src/embed");
+    const script = document.createElement("script");
+    script.dataset.endpoint = ENDPOINT;
+    script.dataset.shortcutKey = "";
+
+    const shadow = mount(readConfig(script)!);
+    await waitFor(() => expect(shadow.textContent).toContain("Ask Assistant"));
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true, shiftKey: true });
+
+    expect(shadow.querySelector('[role="dialog"]')).toBeNull();
   });
 });

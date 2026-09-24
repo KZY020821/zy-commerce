@@ -149,6 +149,16 @@ export interface ConciergeWidgetProps {
   configured?: boolean;
   /** Rendered when a product card is clicked. Defaults to a plain anchor. */
   renderProductLink?: (product: ProductCard, children: ReactNode) => ReactNode;
+  /**
+   * Buttons under every product card — "Add to cart", "Notify me when it's
+   * back" — for a shop whose site can act on them. `action` is yours; the
+   * widget only hands it back.
+   *
+   * Nothing is shown without `onProductAction`: a button that does nothing is
+   * worse than no button.
+   */
+  productActions?: { label: string; action: string }[];
+  onProductAction?: (choice: { action: string; product: ProductCard }) => void;
   /** Translations / rewording. Anything omitted keeps its English default. */
   labels?: Partial<WidgetLabels>;
   /**
@@ -206,6 +216,9 @@ const PHONE_QUERY = "(max-width: 639px)";
 /** Distance from the bottom of the transcript that counts as "scrolled away". */
 const STICKY_SLACK_PX = 48;
 
+/** How far the header has to be dragged down before the panel closes. */
+const CLOSE_DRAG_PX = 96;
+
 const FOCUSABLE = 'button:not([disabled]), textarea:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
 
 /** The assistant's tools, in the customer's words. */
@@ -234,6 +247,8 @@ export function ConciergeWidget({
   onFeedback,
   configured = true,
   renderProductLink,
+  productActions = [],
+  onProductAction,
   labels,
   handoff,
   privacyNote,
@@ -268,6 +283,9 @@ export function ConciergeWidget({
   const stickToBottom = useRef(true);
   /** Asked for once per mount, so New chat is never undone by a late restore. */
   const askedForHistory = useRef(false);
+  /** Where a downward drag on the header started, and how far it has come. */
+  const dragFrom = useRef<number | null>(null);
+  const [dragged, setDragged] = useState(0);
 
   /** Scrolls the transcript to the newest message and follows it from then on. */
   function scrollToLatest() {
@@ -367,6 +385,28 @@ export function ConciergeWidget({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [shortcutKey]);
+
+  /**
+   * Dragging the header down closes the panel, the way every sheet on a phone
+   * does. Only the header: a drag anywhere else is someone scrolling the
+   * conversation, and taking that over would be maddening.
+   */
+  function onHeaderTouchStart(e: React.TouchEvent) {
+    dragFrom.current = fullScreen ? (e.touches[0]?.clientY ?? null) : null;
+  }
+
+  function onHeaderTouchMove(e: React.TouchEvent) {
+    if (dragFrom.current === null) return;
+    // Upwards is nothing: this gesture only goes one way.
+    setDragged(Math.max(0, (e.touches[0]?.clientY ?? 0) - dragFrom.current));
+  }
+
+  function onHeaderTouchEnd() {
+    const moved = dragged;
+    dragFrom.current = null;
+    setDragged(0);
+    if (moved >= CLOSE_DRAG_PX) setOpen(false);
+  }
 
   /** Keeps Tab inside the panel while it is the only thing on screen. */
   function trapFocus(e: React.KeyboardEvent) {
@@ -499,14 +539,20 @@ export function ConciergeWidget({
       role="dialog"
       aria-label={assistantName}
       aria-modal={fullScreen || undefined}
-      style={visibleHeight ? { height: `${visibleHeight}px` } : undefined}
+      style={{ ...(visibleHeight ? { height: `${visibleHeight}px` } : {}), ...(dragged > 0 ? { transform: `translateY(${dragged}px)` } : {}) }}
       onKeyDown={(e) => {
         if (e.key === "Escape") setOpen(false);
         if (e.key === "Tab") trapFocus(e);
       }}
       className="concierge-widget fixed inset-0 z-50 flex flex-col overflow-hidden bg-background text-foreground sm:inset-auto sm:right-4 sm:bottom-4 sm:h-[min(640px,calc(100dvh-2rem))] sm:w-[420px] sm:rounded-2xl sm:border sm:shadow-2xl"
     >
-      <header className="flex items-center gap-3 border-b px-4 py-3">
+      <header
+        className="flex items-center gap-3 border-b px-4 py-3"
+        onTouchStart={onHeaderTouchStart}
+        onTouchMove={onHeaderTouchMove}
+        onTouchEnd={onHeaderTouchEnd}
+        onTouchCancel={onHeaderTouchEnd}
+      >
         <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
           {initial}
         </span>
@@ -622,14 +668,32 @@ export function ConciergeWidget({
                           </>
                         );
                         const className = "flex items-center gap-3 rounded-xl border bg-card p-2.5 text-left transition hover:border-foreground/20 hover:bg-muted/40";
-                        return renderProductLink ? (
-                          <div key={p.ref} className="contents">
-                            {renderProductLink(p, <span className={className}>{body}</span>)}
-                          </div>
+                        const link = renderProductLink ? (
+                          <div className="contents">{renderProductLink(p, <span className={className}>{body}</span>)}</div>
                         ) : (
-                          <a key={p.ref} href={p.url ?? "#"} className={className}>
+                          <a href={p.url ?? "#"} className={className}>
                             {body}
                           </a>
+                        );
+                        return (
+                          <div key={p.ref} className="space-y-1.5">
+                            {link}
+                            {/* What the shop's own site can do with this product. */}
+                            {onProductAction && productActions.length > 0 ? (
+                              <div className="flex flex-wrap gap-2 pl-1">
+                                {productActions.map((choice) => (
+                                  <button
+                                    key={choice.action}
+                                    type="button"
+                                    onClick={() => onProductAction({ action: choice.action, product: p })}
+                                    className="rounded-full border bg-background px-3 py-1 text-xs font-medium transition hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                                  >
+                                    {choice.label}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
                         );
                       })}
                     </div>

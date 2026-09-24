@@ -883,3 +883,97 @@ describe("ConciergeWidget — when the model thinks out loud first", () => {
     release();
   });
 });
+
+describe("ConciergeWidget — closing it with a swipe", () => {
+  const header = () => screen.getByText("Fit Assistant").closest("header")!;
+  const touch = (clientY: number) => ({ touches: [{ clientY }], changedTouches: [{ clientY }] });
+
+  it("closes when the header is dragged far enough down", () => {
+    stubScreen({ phone: true });
+    renderWidget();
+    openWidget();
+
+    fireEvent.touchStart(header(), touch(100));
+    fireEvent.touchMove(header(), touch(160));
+    // Following the finger, still open.
+    expect(panel().style.transform).toBe("translateY(60px)");
+
+    fireEvent.touchMove(header(), touch(220));
+    fireEvent.touchEnd(header(), touch(220));
+
+    expect(screen.queryByRole("dialog", { name: "Fit Assistant" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Ask Fit Assistant" }));
+  });
+
+  it("springs back when the drag was a short one", () => {
+    stubScreen({ phone: true });
+    renderWidget();
+    openWidget();
+
+    fireEvent.touchStart(header(), touch(100));
+    fireEvent.touchMove(header(), touch(140));
+    fireEvent.touchEnd(header(), touch(140));
+
+    expect(panel()).toBeTruthy();
+    expect(panel().style.transform).toBe("");
+  });
+
+  it("ignores an upward drag, and the gesture entirely on a larger screen", () => {
+    stubScreen({ phone: true });
+    renderWidget();
+    openWidget();
+    fireEvent.touchStart(header(), touch(300));
+    fireEvent.touchMove(header(), touch(100));
+    fireEvent.touchEnd(header(), touch(100));
+    expect(panel()).toBeTruthy();
+
+    cleanup();
+    stubScreen({ phone: false });
+    renderWidget();
+    openWidget();
+    fireEvent.touchStart(header(), touch(100));
+    fireEvent.touchMove(header(), touch(400));
+    fireEvent.touchEnd(header(), touch(400));
+
+    expect(panel()).toBeTruthy();
+    expect(panel().style.transform).toBe("");
+  });
+});
+
+describe("ConciergeWidget — what a card can do", () => {
+  const actions = [
+    { label: "Add to cart", action: "add-to-cart" },
+    { label: "Notify me", action: "notify" },
+  ];
+
+  it("offers the shop's actions on every card and hands back which one was pressed", async () => {
+    const onProductAction = vi.fn();
+    renderWidget({ productActions: actions, onProductAction });
+    openWidget();
+    await sendAndWait("which paddle?");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add to cart" }));
+
+    expect(onProductAction).toHaveBeenCalledWith({ action: "add-to-cart", product: card });
+    expect(screen.getByRole("button", { name: "Notify me" })).toBeTruthy();
+    // The card is still a link to the product page.
+    expect(screen.getByRole("link", { name: /Atlas Control Paddle/ }).getAttribute("href")).toBe("/products/atlas");
+  });
+
+  it("shows nothing when the host has nowhere to send them", async () => {
+    renderWidget({ productActions: actions });
+    openWidget();
+    await sendAndWait("which paddle?");
+
+    expect(screen.queryByRole("button", { name: "Add to cart" })).toBeNull();
+  });
+
+  it("shows nothing when the host named no actions", async () => {
+    renderWidget({ onProductAction: vi.fn() });
+    openWidget();
+    await sendAndWait("which paddle?");
+
+    expect(screen.getByRole("link", { name: /Atlas Control Paddle/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add to cart" })).toBeNull();
+  });
+});
