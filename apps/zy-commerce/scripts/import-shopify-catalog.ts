@@ -4,6 +4,14 @@
  *
  *   pnpm tsx scripts/import-shopify-catalog.ts                 # → prisma/seed-data/selkirk.json
  *   pnpm tsx scripts/import-shopify-catalog.ts --store www.selkirk.com --out prisma/seed-data/selkirk.json --currency MYR
+ *   pnpm tsx scripts/import-shopify-catalog.ts --store www.mypickleball.my --name "MyPickleball" \
+ *     --source-currency MYR --currency MYR --out /tmp/mypickleball.json --evaluate-out /tmp/mypickleball.evaluate.json
+ *
+ * Options: --store, --name, --out (default prisma/seed-data/<store>.json),
+ * --evaluate-out (also write the `catalog-concierge evaluate` shape),
+ * --source-currency (the store's, default USD), --currency (ours, default MYR),
+ * --include-other (keep products no category matches, under "Other"),
+ * --sku-prefix, --concurrency, --cache.
  *
  * Sources (all public, unauthenticated):
  *   - /products.json              names, vendors, types, tags, options, variants, prices, images
@@ -16,61 +24,19 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { htmlToLines, normalizeSpecs, parseLabelLines, parseTechSpecs, stripTags } from "catalog-concierge";
+import { htmlToLines, normalizeSpecs, parseLabelLines, parseTechSpecs } from "catalog-concierge";
+import type { SeedCatalog, SeedProduct, SeedVariant } from "../prisma/seed-data/types";
+import { ALL_CATEGORIES, parseImportArgs, resolveRate, toEvaluateCatalogue, toMinor, triageFeed, triageReport, type ImportOptions, type ShopifyProduct } from "./lib/shopify-catalog";
 
-// ---------------------------------------------------------------------------
-// CLI args
-// ---------------------------------------------------------------------------
-const args = new Map<string, string>();
-for (let i = 2; i < process.argv.length; i += 2) args.set(process.argv[i]!.replace(/^--/, ""), process.argv[i + 1] ?? "");
-const STORE = args.get("store") ?? "www.selkirk.com";
-const STORE_NAME = args.get("name") ?? "Selkirk Sport";
-const OUT = args.get("out") ?? "prisma/seed-data/selkirk.json";
-const TARGET_CURRENCY = (args.get("currency") ?? "MYR").toUpperCase();
-const SOURCE_CURRENCY = (args.get("source-currency") ?? "USD").toUpperCase();
-const CONCURRENCY = Number(args.get("concurrency") ?? 2);
-const CACHE_DIR = args.get("cache") ?? path.join("node_modules", ".cache", "zy-import", STORE);
-
-/** Fixed conversion table (mid-market, 2026-09-06). Extend as needed. */
-const RATES: Record<string, number> = { "USD:MYR": 4.415, "USD:USD": 1, "USD:SGD": 1.29, "USD:EUR": 0.86, "USD:GBP": 0.74, "USD:AUD": 1.5 };
+function options(): ImportOptions {
+  try { return parseImportArgs(process.argv.slice(2)); }
+  catch (e) { console.error((e as Error).message); process.exit(1); }
+}
+const { store: STORE, storeName: STORE_NAME, out: OUT, evaluateOut: EVALUATE_OUT, targetCurrency: TARGET_CURRENCY, sourceCurrency: SOURCE_CURRENCY, concurrency: CONCURRENCY, cacheDir: CACHE_DIR, skuPrefix: SKU_PREFIX, includeOther: INCLUDE_OTHER } = options();
 
 const UA = "Mozilla/5.0 (compatible; ZYCommerceCatalogImport/1.0; +https://github.com/KZY020821/zy-commerce)";
 
-// ---------------------------------------------------------------------------
-// Shopify types (subset)
-// ---------------------------------------------------------------------------
-interface ShopifyVariant { id: number; title: string; option1: string | null; option2: string | null; option3: string | null; sku: string | null; available: boolean; price: string; compare_at_price: string | null; grams: number; featured_image: { src: string } | null; position: number }
-interface ShopifyImage { id: number; position: number; src: string; width: number; height: number; variant_ids: number[] }
-interface ShopifyProduct { id: number; title: string; handle: string; body_html: string; vendor: string; product_type: string; tags: string[]; options: { name: string; values: string[] }[]; variants: ShopifyVariant[]; images: ShopifyImage[] }
-
-import type { SeedCatalog, SeedProduct, SeedVariant } from "../prisma/seed-data/types";
-
-// ---------------------------------------------------------------------------
-// Categorisation
-// ---------------------------------------------------------------------------
-const CATEGORY_DEFS: { slug: string; name: string; description: string; match: (p: ShopifyProduct) => boolean }[] = [
-  { slug: "paddles", name: "Paddles", description: "Carbon, fiberglass and hybrid pickleball paddles for every level of play.", match: (p) => /^paddle$/i.test(p.product_type) || (p.tags.includes("paddles") && !/bundle|cover|case|grip|weight|eraser|tape/i.test(p.title)) },
-  { slug: "bundles", name: "Bundles", description: "Paddle sets and bundles that get you court-ready in one go.", match: (p) => /bundle/i.test(p.product_type) || p.tags.includes("bundle") },
-  { slug: "balls", name: "Balls", description: "Indoor, outdoor and quiet pickleballs.", match: (p) => /^balls?$/i.test(p.product_type) },
-  { slug: "nets", name: "Nets", description: "Portable and semi-permanent nets, posts and court setups.", match: (p) => /^net$/i.test(p.product_type) || p.tags.includes("net") },
-  { slug: "bags", name: "Bags", description: "Backpacks, duffles and slings that carry paddles, balls and a change of kit.", match: (p) => /^bags?$/i.test(p.product_type) || p.tags.includes("bags") },
-  { slug: "footwear", name: "Footwear", description: "Court shoes built for lateral movement and long tournament days.", match: (p) => /footwear/i.test(p.product_type) || p.tags.includes("shoe") },
-  { slug: "hats", name: "Hats", description: "Caps, visors and beanies for on and off the court.", match: (p) => /^hats?$/i.test(p.product_type) || p.tags.includes("hat") },
-  { slug: "apparel", name: "Apparel", description: "Performance and lifestyle apparel for men and women.", match: (p) => /apparel/i.test(p.product_type) || p.tags.includes("clothing") },
-  { slug: "accessories", name: "Accessories", description: "Grips, edge tape, paddle care, eyewear, towels and more.", match: (p) => /accessor/i.test(p.product_type) || p.tags.includes("accessories") || p.tags.includes("care") },
-];
-
-const EXCLUDE_TITLE = /free gift|free bag tag|subscription test|send as a gift|paddle customization|vip membership|loop exchange|demos?\b|2nd\b|gift card|warranty|insurance|donation|raffle|ticket|registration|membership|test product/i;
-const EXCLUDE_TYPE = /offsite|gift card/i;
-
-function categorize(p: ShopifyProduct): string | null {
-  if (EXCLUDE_TITLE.test(p.title) || EXCLUDE_TYPE.test(p.product_type) || p.tags.includes("hide")) return null;
-  for (const def of CATEGORY_DEFS) if (def.match(p)) return def.slug;
-  return null;
-}
-
 const MARKETING_LABELS = /^(breathable comfort|unrestrictive movement|weather resistant|moisture-wicking technology|fast-drying technology|relaxed fit|acoustic sound-dampening design|custom material blend|injection-molded construction|community-friendly)$/i;
-void stripTags;
 
 // ---------------------------------------------------------------------------
 // Misc helpers
@@ -87,13 +53,6 @@ function stockFor(key: string, available: boolean): number {
   if (h < 10) return 1 + hashInt(key + "low", 5);
   return 6 + hashInt(key + "stock", 45);
 }
-function toMinor(price: string, rate: number): number {
-  const n = Number(price);
-  if (!Number.isFinite(n)) return 0;
-  if (rate === 1) return Math.round(n * 100);
-  const major = Math.round(n * rate);
-  return Math.max(100, major * 100 - 10); // e.g. $199.99 → RM 882.90
-}
 function cleanName(title: string): string {
   return title.replace(/\s{2,}/g, " ").replace(/\s+-\s*$/, "").trim();
 }
@@ -102,20 +61,8 @@ function imageUrl(src: string): string {
   return src.includes("?") ? `${src}&width=1200` : `${src}?width=1200`;
 }
 
-const CATEGORY_BLURB: Record<string, string> = {
-  paddles: "Pickleball paddle from {brand}.",
-  bundles: "A ready-to-play set from {brand}.",
-  balls: "Pickleballs from {brand}.",
-  nets: "Court net system from {brand}.",
-  bags: "Gear bag from {brand}.",
-  footwear: "Court shoe from {brand}.",
-  hats: "Headwear from {brand}.",
-  apparel: "Court apparel from {brand}.",
-  accessories: "Accessory from {brand}.",
-};
-
 function describe(p: ShopifyProduct, category: string, brand: string, specs: Record<string, string>, options: { name: string; values: string[] }[]): string {
-  const parts: string[] = [CATEGORY_BLURB[category]!.replace("{brand}", brand)];
+  const parts: string[] = [ALL_CATEGORIES.find((c) => c.slug === category)!.blurb.replace("{brand}", brand)];
   const keySpecs = ["Skill Level", "Weight Range", "Weight", "Core Thickness", "Face", "Core", "Grip Circumference", "Paddle Length", "Paddle Width", "Volume", "Dimensions", "Material", "Approval"]
     .filter((k) => specs[k]).map((k) => `${k.toLowerCase()} ${specs[k]}`);
   if (keySpecs.length) parts.push(`Key specs: ${keySpecs.join(", ")}.`);
@@ -174,14 +121,13 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (t: T, i: number) =>
 // Main
 // ---------------------------------------------------------------------------
 async function main() {
-  const rateKey = `${SOURCE_CURRENCY}:${TARGET_CURRENCY}`;
-  const rate = RATES[rateKey];
-  if (!rate) throw new Error(`No conversion rate for ${rateKey}; add it to RATES`);
+  const { rate, rateSource } = resolveRate(SOURCE_CURRENCY, TARGET_CURRENCY);
 
   console.log(`Fetching feed from ${STORE} …`);
   const feed = await fetchFeed();
-  const kept = feed.map((p) => ({ p, category: categorize(p) })).filter((x): x is { p: ShopifyProduct; category: string } => Boolean(x.category) && x.p.variants.some((v) => Number(v.price) > 0));
-  console.log(`  ${feed.length} products in feed, ${kept.length} importable`);
+  const triage = triageFeed(feed, INCLUDE_OTHER);
+  const { kept } = triage;
+  for (const line of triageReport(triage, feed.length, INCLUDE_OTHER)) console.log(line);
 
   console.log(`Fetching ${kept.length} product pages for specs (concurrency ${CONCURRENCY}) …`);
   let done = 0;
@@ -217,7 +163,7 @@ async function main() {
 
     const sellable = p.variants.filter((v) => Number(v.price) > 0);
     const basePrice = toMinor(String(Math.min(...sellable.map((v) => Number(v.price)))), rate);
-    const sku = `SLK-${String(idx + 1).padStart(3, "0")}`;
+    const sku = `${SKU_PREFIX}-${String(idx + 1).padStart(3, "0")}`;
     const hasVariants = sellable.length > 1 || (sellable.length === 1 && sellable[0]!.title !== "Default Title");
     const optionNames = p.options.map((o) => o.name);
 
@@ -250,11 +196,11 @@ async function main() {
     });
   });
 
-  const usedCategories = CATEGORY_DEFS.filter((c) => products.some((p) => p.category === c.slug));
+  const usedCategories = ALL_CATEGORIES.filter((c) => products.some((p) => p.category === c.slug));
   const out: SeedCatalog = {
     generatedAt: new Date().toISOString(),
     source: { store: STORE, storeName: STORE_NAME, feedUrl: `https://${STORE}/products.json`, currency: SOURCE_CURRENCY },
-    pricing: { currency: TARGET_CURRENCY, rate, rateSource: "https://wise.com/gb/currency-converter/usd-to-myr-rate (2026-09-06)" },
+    pricing: { currency: TARGET_CURRENCY, rate, rateSource },
     categories: usedCategories.map((c, i) => ({ slug: c.slug, name: c.name, description: c.description, sortOrder: i })),
     products,
   };
@@ -263,6 +209,13 @@ async function main() {
   const variantCount = products.reduce((s, p) => s + (p.variants?.length ?? 0), 0);
   console.log(`\nWrote ${products.length} products (${withSpecs} with specs, ${variantCount} variants) in ${usedCategories.length} categories → ${OUT}`);
   for (const c of usedCategories) console.log(`  ${c.name}: ${products.filter((p) => p.category === c.slug).length}`);
+
+  if (EVALUATE_OUT) {
+    mkdirSync(path.dirname(EVALUATE_OUT), { recursive: true });
+    writeFileSync(EVALUATE_OUT, JSON.stringify(toEvaluateCatalogue(out), null, 2) + "\n");
+    console.log(`\nWrote the evaluate catalogue → ${EVALUATE_OUT}`);
+    console.log(`  pnpm exec catalog-concierge evaluate ${EVALUATE_OUT} --store "${STORE_NAME}" --currency ${TARGET_CURRENCY} --dry   (after pnpm --filter catalog-concierge build)`);
+  }
 }
 
 main().catch((e) => { console.error(e); process.exitCode = 1; });

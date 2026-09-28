@@ -43,6 +43,38 @@ Both cache fetched pages under `node_modules/.cache/zy-import`, so re-runs are f
 
 The seed applies it idempotently (a fingerprint on the tenant skips unchanged files). Descriptions are generated from extracted facts; images link to the source CDN. For a paying client, replace it with their own product data and media.
 
+### Trying the assistant on a prospect's own catalogue
+
+The Shopify importer can also write the file `catalog-concierge evaluate` reads, so a shop can see the assistant work on its own products without a tenant, a database or an integration:
+
+```bash
+# A Malaysian store that already prices in ringgit: no conversion, and the evaluate file alongside
+pnpm tsx scripts/import-shopify-catalog.ts --store www.mypickleball.my --name "MyPickleball" \
+  --source-currency MYR --currency MYR \
+  --out /tmp/mypickleball.json --evaluate-out /tmp/mypickleball.evaluate.json
+
+# From the repo root, once: build the package's command line
+pnpm --filter catalog-concierge build
+
+# What the catalogue can support (no model, no spend); drop --dry and set DEEPSEEK_API_KEY to ask it questions
+node packages/catalog-concierge/bin/catalog-concierge.mjs evaluate /tmp/mypickleball.evaluate.json \
+  --store "MyPickleball" --currency MYR --locale en-MY --dry
+```
+
+| Option | Default | |
+| --- | --- | --- |
+| `--store` | `www.selkirk.com` | The shop's domain. |
+| `--name` | Selkirk Sport, else the domain | Store name; also the brand when a product has no vendor. |
+| `--source-currency` | `USD` | What the shop prices in. When it matches `--currency` no conversion is applied and prices are kept to the sen. |
+| `--currency` | `MYR` | What the seed file prices in. Other pairs come from the fixed `RATES` table in [`scripts/lib/shopify-catalog.ts`](scripts/lib/shopify-catalog.ts); `pricing.rateSource` records which was used. |
+| `--out` | `prisma/seed-data/<store>.json` | The seed file. Named after the store, so importing another shop never overwrites `selkirk.json`. |
+| `--evaluate-out` | — | Also write the catalogue as `catalog-concierge evaluate` reads it: `ref`, `name`, `price`, `category: {slug, name}`, `imageUrl`, the shop's own product link, and variants. Stock is only what the shop publishes — sold out, or in stock with no count — never the demo's invented quantities. |
+| `--include-other` | off | Keep products no category recognises, under **Other**, instead of dropping them. |
+| `--sku-prefix` | `SLK` for Selkirk, else from the domain | `MYP-001`, `MYP-002`, … |
+| `--concurrency`, `--cache` | `2`, `node_modules/.cache/zy-import/<store>` | Product-page fetching. |
+
+The categories are shaped around Selkirk's `product_type` values, so on another shop's feed some products may match none. The importer never drops them silently: it prints how many were left out and why — not merchandise (gift cards, memberships), no price, or no category — and lists the unrecognised ones by `product_type` with example titles. Re-run with `--include-other` to keep them, or add a matcher to `CATEGORY_DEFS` for a type worth its own category. An unknown option is refused rather than ignored, so a typo in `--source-currency` cannot quietly convert ringgit as if it were dollars.
+
 ## Status
 
 | Phase | Scope | State |
